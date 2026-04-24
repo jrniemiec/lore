@@ -131,6 +131,7 @@ func fileExists(path string) bool {
 }
 
 // LoadTopic ensures the topic dir exists and loads system + history.
+// A new topic always gets an empty history.json written so it appears in ListTopics.
 func (s *FileStore) LoadTopic(name string) (*core.Topic, error) {
 	if _, err := s.ensureTopicDir(name); err != nil {
 		return nil, err
@@ -142,6 +143,16 @@ func (s *FileStore) LoadTopic(name string) (*core.Topic, error) {
 	history, err := s.LoadHistory(name)
 	if err != nil {
 		return nil, err
+	}
+	// Ensure history.json exists on disk so the topic is visible to ListTopics.
+	hp, err := s.historyPath(name)
+	if err != nil {
+		return nil, err
+	}
+	if !fileExists(hp) {
+		if err := saveHistoryFile(hp, history); err != nil {
+			return nil, err
+		}
 	}
 	return &core.Topic{
 		Name:         name,

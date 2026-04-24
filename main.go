@@ -28,35 +28,35 @@ var (
 	flagSkipHistory   bool
 	flagNoStream      bool
 	flagQuiet         bool
-	flagDebug         bool
-	flagAllProfiles   bool
-	flagJSON          bool
-	flagColor         string
-	flagForce         bool
+	flagDebug       bool
+	flagAllProfiles bool
+	flagJSON        bool
+	flagForce       bool
 
 	// display
-	flagSize int
+	flagSize     int
+	flagHelpNoun string
 
 	// admin — read/display
-	flagListTopics    bool
-	flagShowTopic     bool
-	flagShowHistory   bool
-	flagShowSummary   bool
-	flagShowSystem    bool
-	flagShowConfig    bool
-	flagShowProviders bool
-	flagShowStats     bool
-	flagStatus        bool
+	flagTopicList    bool
+	flagTopicInfo    bool
+	flagTopicHistory bool
+	flagTopicSummary bool
+	flagSystem       bool
+	flagConfig       bool
+	flagProfileList  bool
+	flagStats        bool
+	flagStatus       bool
 
 	// admin — write/mutate
-	flagCreateTopic       string
-	flagDeleteTopic       bool
-	flagClearHistory      bool
-	flagSetSystem         string
-	flagSetSystemFile     string
-	flagSetDefaultProfile string
-	flagSetDefaultTopic   string
-	flagAddResource       string
+	flagTopicNew          string
+	flagTopicDelete       bool
+	flagTopicClear        bool
+	flagSystemSet         string
+	flagSystemFile        string
+	flagProfileDefaultSet string
+	flagTopicDefaultSet   string
+	flagTopicResource     string
 )
 
 func init() {
@@ -82,43 +82,43 @@ func init() {
 	flag.BoolVar(&flagNoStream, "N", false, "disable streaming")
 	flag.BoolVar(&flagQuiet, "quiet", false, "suppress warnings and stats on stderr")
 	flag.BoolVar(&flagQuiet, "q", false, "suppress warnings and stats on stderr")
-	flag.BoolVar(&flagDebug, "debug", false, "print debug info to stderr")
-	flag.BoolVar(&flagDebug, "D", false, "print debug info to stderr")
+	flag.BoolVar(&flagDebug, "debug", false, "print request/response debug info to stderr")
+	flag.BoolVar(&flagDebug, "D", false, "print request/response debug info to stderr")
 	flag.BoolVar(&flagAllProfiles, "all-profiles", false, "run prompt against all configured profiles")
 	flag.BoolVar(&flagAllProfiles, "A", false, "run prompt against all configured profiles")
 	flag.BoolVar(&flagJSON, "json", false, "output result as JSON")
-	flag.StringVar(&flagColor, "color", "auto", "colorize output: on|off|auto")
 	flag.BoolVar(&flagForce, "force", false, "skip confirmation prompts")
 	flag.BoolVar(&flagForce, "f", false, "skip confirmation prompts")
 
-	// display
-	flag.IntVar(&flagSize, "size", 20, "exchanges/lines to show for --show-* commands")
+	// display / help
+	flag.IntVar(&flagSize, "size", 20, "exchanges/lines to show for topic-history/topic-summary")
+	flag.StringVar(&flagHelpNoun, "help-for", "", "show help for a command group: topic|profile|system|session|info|all")
 
 	// admin — read/display
-	flag.BoolVar(&flagListTopics, "list-topics", false, "list all topics")
-	flag.BoolVar(&flagListTopics, "T", false, "list all topics")
-	flag.BoolVar(&flagShowTopic, "show-topic", false, "show topic contents")
-	flag.BoolVar(&flagShowHistory, "show-history", false, "print last N exchanges from history")
-	flag.BoolVar(&flagShowSummary, "show-summary", false, "print current summary for topic")
-	flag.BoolVar(&flagShowSystem, "show-system", false, "print system prompt for topic")
-	flag.BoolVar(&flagShowConfig, "show-config", false, "print resolved configuration")
-	flag.BoolVar(&flagShowProviders, "show-providers", false, "print configured profiles")
-	flag.BoolVar(&flagShowStats, "show-stats", false, "print cumulative usage and cost stats")
+	flag.BoolVar(&flagTopicList, "topic-list", false, "list all topics")
+	flag.BoolVar(&flagTopicList, "T", false, "list all topics")
+	flag.BoolVar(&flagTopicInfo, "topic-info", false, "show topic contents")
+	flag.BoolVar(&flagTopicHistory, "topic-history", false, "print last N exchanges from history")
+	flag.BoolVar(&flagTopicSummary, "topic-summary", false, "print current summary for topic")
+	flag.BoolVar(&flagSystem, "system", false, "print system prompt for topic")
+	flag.BoolVar(&flagConfig, "config", false, "print resolved configuration")
+	flag.BoolVar(&flagProfileList, "profile-list", false, "print configured profiles")
+	flag.BoolVar(&flagStats, "stats", false, "print cumulative usage and cost stats")
 	flag.BoolVar(&flagStatus, "status", false, "show effective defaults for next invocation")
 
 	// admin — write/mutate
-	flag.StringVar(&flagCreateTopic, "create-topic", "", "create a new topic")
-	flag.BoolVar(&flagDeleteTopic, "delete-topic", false, "delete topic and all its files")
-	flag.BoolVar(&flagClearHistory, "clear-history", false, "erase history for topic")
-	flag.StringVar(&flagSetSystem, "set-system", "", "set system prompt for topic")
-	flag.StringVar(&flagSetSystem, "s", "", "set system prompt for topic")
-	flag.StringVar(&flagSetSystemFile, "set-system-file", "", "set system prompt from file")
-	flag.StringVar(&flagSetSystemFile, "S", "", "set system prompt from file")
-	flag.StringVar(&flagSetDefaultProfile, "set-default-profile", "", "persist default profile to config")
-	flag.StringVar(&flagSetDefaultProfile, "P", "", "persist default profile to config")
-	flag.StringVar(&flagSetDefaultTopic, "set-default-topic", "", "persist default topic to config")
-	flag.StringVar(&flagAddResource, "add-resource", "", "copy file into topic resources/")
-	flag.StringVar(&flagAddResource, "u", "", "copy file into topic resources/")
+	flag.StringVar(&flagTopicNew, "topic-new", "", "create a new topic")
+	flag.BoolVar(&flagTopicDelete, "topic-delete", false, "delete topic and all its files")
+	flag.BoolVar(&flagTopicClear, "topic-clear", false, "erase history for topic")
+	flag.StringVar(&flagSystemSet, "system-set", "", "set system prompt for topic")
+	flag.StringVar(&flagSystemSet, "s", "", "set system prompt for topic")
+	flag.StringVar(&flagSystemFile, "system-file", "", "set system prompt from file")
+	flag.StringVar(&flagSystemFile, "S", "", "set system prompt from file")
+	flag.StringVar(&flagProfileDefaultSet, "profile-default-set", "", "persist default profile to config")
+	flag.StringVar(&flagProfileDefaultSet, "P", "", "persist default profile to config")
+	flag.StringVar(&flagTopicDefaultSet, "topic-default-set", "", "persist default topic to config")
+	flag.StringVar(&flagTopicResource, "topic-resource", "", "copy file into topic resources/")
+	flag.StringVar(&flagTopicResource, "u", "", "copy file into topic resources/")
 }
 
 func main() {
@@ -165,11 +165,12 @@ func isHeadless() bool {
 		return true
 	}
 	// Admin commands always bypass the TUI.
-	if flagListTopics || flagShowTopic || flagShowHistory || flagShowSummary ||
-		flagShowSystem || flagShowConfig || flagShowProviders || flagShowStats ||
-		flagStatus || flagCreateTopic != "" || flagDeleteTopic || flagClearHistory ||
-		flagSetSystem != "" || flagSetSystemFile != "" || flagSetDefaultProfile != "" ||
-		flagSetDefaultTopic != "" || flagAddResource != "" || flagAllProfiles {
+	if flagTopicList || flagTopicInfo || flagTopicHistory || flagTopicSummary ||
+		flagSystem || flagConfig || flagProfileList || flagStats ||
+		flagStatus || flagTopicNew != "" || flagTopicDelete || flagTopicClear ||
+		flagSystemSet != "" || flagSystemFile != "" || flagProfileDefaultSet != "" ||
+		flagTopicDefaultSet != "" || flagTopicResource != "" || flagAllProfiles ||
+		flagHelpNoun != "" {
 		return true
 	}
 	return stdinIsPipe()

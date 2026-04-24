@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -43,6 +44,7 @@ type ChatOptions struct {
 	StrategyOverride string    // override context strategy for this call
 	BudgetOverride   int       // override token budget for this call
 	Out              io.Writer // output for summarize strategy notifications; nil = quiet
+	Debug            bool      // print request/response details to stderr
 }
 
 // ChatResult holds the outcome of a Chat() call.
@@ -95,6 +97,20 @@ func (e *Engine) Chat(ctx context.Context, prompt string, opts ChatOptions, onDe
 	contextMsgs := strat.Apply(e.topic.History, prompt)
 	allMsgs := append(contextMsgs, core.Message{Role: core.RoleUser, Content: prompt})
 
+	if opts.Debug {
+		fmt.Fprintf(os.Stderr, "[debug] profile=%s provider=%s model=%s\n",
+			e.profileCode, e.profile.Provider, e.profile.Model)
+		fmt.Fprintf(os.Stderr, "[debug] context messages=%d system=%v\n",
+			len(allMsgs), e.topic.SystemPrompt != "")
+		for i, m := range allMsgs {
+			preview := m.Content
+			if len(preview) > 80 {
+				preview = preview[:80] + "..."
+			}
+			fmt.Fprintf(os.Stderr, "[debug]   [%d] %s: %q\n", i, m.Role, preview)
+		}
+	}
+
 	start := time.Now()
 	var (
 		response string
@@ -107,6 +123,11 @@ func (e *Engine) Chat(ctx context.Context, prompt string, opts ChatOptions, onDe
 		response, usage, err = e.prov.ChatStream(ctx, e.topic.SystemPrompt, allMsgs, onDelta)
 	}
 	elapsed := time.Since(start)
+
+	if opts.Debug {
+		fmt.Fprintf(os.Stderr, "[debug] elapsed=%dms in=%d out=%d err=%v\n",
+			elapsed.Milliseconds(), usage.InputTokens, usage.OutputTokens, err)
+	}
 
 	if err != nil {
 		return ChatResult{Usage: usage, Elapsed: elapsed}, err

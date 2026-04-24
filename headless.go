@@ -24,53 +24,56 @@ func runHeadless(cfg config.Config, cfgPath string) int {
 
 	// --- provider-independent admin commands (no engine/API key needed) ---
 
-	if flagListTopics {
+	if flagHelpNoun != "" {
+		return cmdHelpNoun(flagHelpNoun)
+	}
+	if flagTopicList {
 		return cmdListTopics(st)
 	}
-	if flagShowConfig {
+	if flagConfig {
 		return cmdShowConfig(cfg)
 	}
 	if flagStatus {
 		return cmdStatus(cfg, cfgPath, topicName, flagProfile)
 	}
-	if flagShowProviders {
+	if flagProfileList {
 		return cmdShowProviders(cfg)
 	}
-	if flagShowStats {
+	if flagStats {
 		return cmdShowStats(loreHome, topicName)
 	}
-	if flagSetDefaultTopic != "" {
-		return cmdSetDefaultTopic(cfgPath, cfg, flagSetDefaultTopic)
+	if flagTopicDefaultSet != "" {
+		return cmdSetDefaultTopic(cfgPath, cfg, flagTopicDefaultSet)
 	}
-	if flagSetDefaultProfile != "" {
-		return cmdSetDefaultProfile(cfgPath, cfg, flagSetDefaultProfile)
+	if flagProfileDefaultSet != "" {
+		return cmdSetDefaultProfile(cfgPath, cfg, flagProfileDefaultSet)
 	}
-	if flagCreateTopic != "" {
-		return cmdCreateTopic(st, flagCreateTopic, flagSetSystem, flagSetSystemFile)
+	if flagTopicNew != "" {
+		return cmdCreateTopic(st, flagTopicNew, flagSystemSet, flagSystemFile)
 	}
-	if flagDeleteTopic {
+	if flagTopicDelete {
 		return cmdDeleteTopic(st, topicName, flagForce)
 	}
-	if flagClearHistory {
+	if flagTopicClear {
 		return cmdClearHistory(st, topicName, flagForce)
 	}
-	if flagShowHistory {
+	if flagTopicHistory {
 		return cmdShowHistory(st, topicName, flagSize)
 	}
-	if flagShowSummary {
+	if flagTopicSummary {
 		return cmdShowSummary(st, topicName, flagSize)
 	}
-	if flagShowSystem {
+	if flagSystem {
 		return cmdShowSystem(st, topicName)
 	}
-	if flagShowTopic {
+	if flagTopicInfo {
 		return cmdShowTopic(st, topicName)
 	}
-	if flagSetSystem != "" || flagSetSystemFile != "" {
-		return cmdSetSystem(st, topicName, flagSetSystem, flagSetSystemFile)
+	if flagSystemSet != "" || flagSystemFile != "" {
+		return cmdSetSystem(st, topicName, flagSystemSet, flagSystemFile)
 	}
-	if flagAddResource != "" {
-		return cmdAddResource(st, topicName, flagAddResource)
+	if flagTopicResource != "" {
+		return cmdAddResource(st, topicName, flagTopicResource)
 	}
 
 	// --- chat (needs provider via engine) ---
@@ -129,6 +132,7 @@ func doChat(e *engine.Engine, prompt string) int {
 		NoStream:         flagNoStream || flagJSON,
 		StrategyOverride: flagStrategy,
 		BudgetOverride:   flagContextLimit,
+		Debug:            flagDebug,
 	}
 	if !flagQuiet {
 		opts.Out = os.Stderr
@@ -584,6 +588,75 @@ func totalHistoryTokens(h *core.History) int {
 		total += core.ApproxTokens(m.Content)
 	}
 	return total
+}
+
+func cmdHelpNoun(noun string) int {
+	groups := map[string][]helpEntry{
+		"topic": {
+			{"--topic-list", "list all topics with message count and last used"},
+			{"--topic-info", "show info for current topic (history, system, summary)"},
+			{"--topic-history [--size N]", "show last N exchanges (default 20)"},
+			{"--topic-summary", "show current context summary for topic"},
+			{"--topic-new <name>", "create a new topic and switch to it"},
+			{"--topic-delete [--force]", "delete current topic and all its files"},
+			{"--topic-clear [--force]", "erase history for current topic"},
+			{"--topic-default-set <name>", "persist default topic to config"},
+			{"--topic-resource <file>", "add resource file to current topic"},
+		},
+		"profile": {
+			{"--profile-list", "list all configured profiles"},
+			{"--profile-default-set <name>", "persist default profile to config"},
+		},
+		"system": {
+			{"--system", "show system prompt for current topic"},
+			{"--system-set <text> / -s", "set system prompt inline"},
+			{"--system-file <path> / -S", "set system prompt from file"},
+		},
+		"session": {
+			{"--strategy <name>", "override context strategy: tail|token-budget|summarize"},
+			{"--context-limit <n>", "override token budget for this invocation"},
+			{"--history-window <n>", "override tail window (number of past user turns)"},
+			{"--skip-history / -X", "do not persist this exchange to history"},
+			{"--no-stream / -N", "disable streaming; print full response at once"},
+			{"--all-profiles / -A", "run prompt against all configured profiles"},
+		},
+		"info": {
+			{"--config", "print resolved configuration"},
+			{"--status", "show effective defaults for next invocation"},
+			{"--stats", "print cumulative usage and cost stats"},
+			{"--debug / -D", "print request/response debug info to stderr"},
+			{"--help-for <noun>", "show help for a command group: topic|profile|system|session|info|all"},
+		},
+	}
+	order := []string{"topic", "profile", "system", "session", "info"}
+
+	noun = strings.ToLower(strings.TrimSpace(noun))
+	if noun == "all" || noun == "" {
+		for _, n := range order {
+			printHelpGroup(n, groups[n])
+		}
+		return 0
+	}
+	entries, ok := groups[noun]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "unknown noun %q — available: %s\n", noun, strings.Join(order, "|"))
+		return 1
+	}
+	printHelpGroup(noun, entries)
+	return 0
+}
+
+type helpEntry struct {
+	flag string
+	desc string
+}
+
+func printHelpGroup(noun string, entries []helpEntry) {
+	fmt.Printf("%s:\n", noun)
+	for _, e := range entries {
+		fmt.Printf("  %-38s  %s\n", e.flag, e.desc)
+	}
+	fmt.Println()
 }
 
 // interruptContext returns a context that is cancelled on SIGINT.
