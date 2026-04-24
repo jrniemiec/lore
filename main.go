@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"github.vom/jrniemiec/lore/config"
+	"github.vom/jrniemiec/lore/engine"
+	"github.vom/jrniemiec/lore/tui"
 )
 
 // --- flag variables -------------------------------------------------------
@@ -143,9 +145,18 @@ func run() int {
 		return runHeadless(cfg, cfgPath)
 	}
 
-	// TUI — implemented in Phase 2
-	fmt.Fprintln(os.Stderr, "TUI not yet implemented — use --no-tui or pipe stdin for headless mode")
-	return 1
+	loreHome := config.LoreHome()
+	topicName := config.EffectiveTopic(cfg, flagTopic)
+	e, err := engine.New(cfg, cfgPath, loreHome, topicName, flagProfile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "engine: %v\n", err)
+		return 1
+	}
+	if err := tui.Start(e, cfg, loreHome); err != nil {
+		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // isHeadless returns true when lore should skip the TUI.
