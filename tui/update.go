@@ -114,26 +114,93 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastCtrlC = now
 			return m, nil
 
-		// Esc: return focus to input
+		// Esc: cancel pending action, collapse cmd pane, or return focus to input
 		case key.Matches(msg, keys.Dismiss):
-			m.focus = paneInput
-			m.focusedExIdx = -1
-			m.input.Focus()
-			m.rebuildConvContent()
+			if m.pendingAction != nil {
+				m.pendingAction = nil
+				m.confirmBuf = ""
+				canceled := cmdResult{input: m.lastCmd.input, output: []string{"operation canceled"}}
+				m.lastCmd = &canceled
+				m.cmdScroll.SetContent(renderCmdOutput(&m))
+				m.cmdScroll.GotoTop()
+				m.focus = paneInput
+				m.input.Focus()
+				m.syncLayout()
+			} else if m.cmdPaneOpen {
+				m.cmdPaneOpen = false
+				m.lastCmd = nil
+				m.focus = paneInput
+				m.input.Focus()
+				m.syncLayout()
+			} else {
+				m.focus = paneInput
+				m.focusedExIdx = -1
+				m.input.Focus()
+				m.rebuildConvContent()
+			}
 
-		// Enter: send (input pane) or dismiss (conv pane)
+		// Enter: confirm pending action, send (input pane), or dismiss (conv pane)
 		case key.Matches(msg, keys.Send):
-			if m.focus == paneConv {
+			if m.focus == paneCmd && m.pendingAction == nil {
+				m.cmdPaneOpen = false
+				m.lastCmd = nil
+				m.focus = paneInput
+				m.input.Focus()
+				m.syncLayout()
+			} else if m.pendingAction != nil {
+				if strings.ToLower(strings.TrimSpace(m.confirmBuf)) == "yes" {
+					result := m.pendingAction()
+					m.pendingAction = nil
+					m.confirmBuf = ""
+					m.lastCmd = &result
+					m.cmdScroll.SetContent(renderCmdOutput(&m))
+					m.cmdScroll.GotoTop()
+				} else {
+					m.pendingAction = nil
+					m.confirmBuf = ""
+					canceled := cmdResult{input: m.lastCmd.input, output: []string{"operation canceled"}}
+					m.lastCmd = &canceled
+					m.cmdScroll.SetContent(renderCmdOutput(&m))
+					m.cmdScroll.GotoTop()
+				}
+				m.focus = paneInput
+				m.input.Focus()
+				m.syncLayout()
+			} else if m.focus == paneConv {
 				m.focus = paneInput
 				m.focusedExIdx = -1
 				m.input.Focus()
 				m.rebuildConvContent()
 			} else if !m.streaming {
-				if strings.TrimSpace(m.input.Value()) == "" {
-					// Empty input: just jump to the bottom of the conversation.
+				val := strings.TrimSpace(m.input.Value())
+				if val == "" {
 					m.scrollToBottom()
 				} else {
-					cmds = append(cmds, m.sendMessage())
+					m.pushHistory(val)
+					if !strings.HasPrefix(val, "/") && looksLikeCommand(val) {
+						val = "/" + val
+					}
+					if strings.HasPrefix(val, "/") {
+						result := handleCommand(&m, val)
+						if result.quit {
+							return m, tea.Quit
+						}
+						m.lastCmd = &result
+						m.cmdPaneOpen = true
+						m.input.Reset()
+						if result.isError {
+							m.focus = paneInput
+							m.input.Focus()
+						} else {
+							m.focus = paneCmd
+							m.input.Blur()
+						}
+						m.syncLayout()
+						m.cmdScroll.SetContent(renderCmdOutput(&m))
+						m.cmdScroll.GotoTop()
+					} else {
+						cmds = append(cmds, m.sendMessage())
+					}
 				}
 			}
 
@@ -143,9 +210,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input.InsertString("\n")
 			}
 
-		// Arrow up/down: navigate exchanges in conv pane; scroll viewport in input pane
+		// Arrow up/down: history in input pane, scroll cmd pane, navigate conv pane, or scroll conv
 		case key.Matches(msg, keys.NavUp):
-			if m.focus == paneConv {
+			if m.focus == paneInput && !strings.Contains(m.input.Value(), "\n") && len(m.inputHistory) > 0 {
+				if m.historyIdx == -1 {
+					// Start browsing: save current draft, jump to newest entry.
+					m.historySaved = m.input.Value()
+					m.historyIdx = len(m.inputHistory) - 1
+				} else if m.historyIdx > 0 {
+					m.historyIdx--
+				}
+				m.input.SetValue(m.inputHistory[m.historyIdx])
+				m.input.CursorEnd()
+			} else if m.focus == paneCmd {
+				m.cmdScroll.ScrollUp(3)
+			} else if m.focus == paneConv {
 				if m.focusedExIdx < 0 {
 					m.focusedExIdx = len(m.exchanges) - 1
 				} else if m.focusedExIdx > 0 {
@@ -158,7 +237,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.NavDown):
-			if m.focus == paneConv {
+			if m.focus == paneInput && m.historyIdx != -1 {
+				if m.historyIdx < len(m.inputHistory)-1 {
+					m.historyIdx++
+					m.input.SetValue(m.inputHistory[m.historyIdx])
+					m.input.CursorEnd()
+				} else {
+					// Past the newest: restore draft and exit history mode.
+					m.input.SetValue(m.historySaved)
+					m.input.CursorEnd()
+					m.historyIdx = -1
+					m.historySaved = ""
+				}
+			} else if m.focus == paneCmd {
+				m.cmdScroll.ScrollDown(3)
+			} else if m.focus == paneConv {
 				if m.focusedExIdx >= 0 && m.focusedExIdx < len(m.exchanges)-1 {
 					m.focusedExIdx++
 				}
@@ -170,15 +263,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		// Page Up/Down: scroll the conversation viewport
+		// Page Up/Down: scroll cmd pane or conversation viewport
 		case key.Matches(msg, keys.ScrollUp):
-			m.userScrolled = true
-			m.conv.HalfPageUp()
+			if m.focus == paneCmd {
+				m.cmdScroll.HalfPageUp()
+			} else {
+				m.userScrolled = true
+				m.conv.HalfPageUp()
+			}
 
 		case key.Matches(msg, keys.ScrollDown):
-			m.conv.HalfPageDown()
-			if m.conv.AtBottom() {
-				m.userScrolled = false
+			if m.focus == paneCmd {
+				m.cmdScroll.HalfPageDown()
+			} else {
+				m.conv.HalfPageDown()
+				if m.conv.AtBottom() {
+					m.userScrolled = false
+				}
 			}
 
 		// Ctrl+L: clear screen
@@ -192,7 +293,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// TODO: profile picker popup
 
 		default:
-			if m.focus == paneInput && !m.streaming {
+			// Any edit while browsing history exits history mode, keeping current entry.
+			if m.focus == paneInput && m.historyIdx != -1 {
+				m.historyIdx = -1
+				m.historySaved = ""
+			}
+			if m.pendingAction != nil {
+				switch msg.Type {
+				case tea.KeyRunes:
+					m.confirmBuf += string(msg.Runes)
+					m.cmdScroll.SetContent(renderCmdOutput(&m))
+				case tea.KeyBackspace:
+					if len(m.confirmBuf) > 0 {
+						m.confirmBuf = m.confirmBuf[:len(m.confirmBuf)-1]
+						m.cmdScroll.SetContent(renderCmdOutput(&m))
+					}
+				}
+			} else if m.focus == paneInput && !m.streaming {
 				m.cursorVisible = true // reset blink phase on keystroke
 				var cmd tea.Cmd
 				m.input, cmd = m.input.Update(msg)

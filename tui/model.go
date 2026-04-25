@@ -22,6 +22,7 @@ type focusPane int
 const (
 	paneInput focusPane = iota
 	paneConv
+	paneCmd
 )
 
 // exchange holds one complete user+assistant turn.
@@ -77,8 +78,30 @@ type Model struct {
 	topicStats   store.CallStats
 	sessionStats store.CallStats
 
+	// bottom pane: command output
+	lastCmd     *cmdResult
+	cmdPaneOpen bool
+	cmdScroll   viewport.Model
+
 	// ctrl+c double-press
 	lastCtrlC time.Time
+
+	// pending confirmation (e.g. topic-delete, topic-clear)
+	pendingAction func() cmdResult
+	confirmBuf    string
+
+	// input history (bash-style, in-memory only)
+	inputHistory []string // oldest first, max 128
+	historyIdx   int      // -1 = not browsing
+	historySaved string   // draft saved before browsing started
+}
+
+// cmdResult holds one slash command invocation and its output.
+type cmdResult struct {
+	input   string
+	output  []string
+	isError bool
+	quit    bool // if true, the app should exit
 }
 
 // New creates a ready-to-run Model, loading existing history.
@@ -121,6 +144,7 @@ func New(eng *engine.Engine, cfg config.Config, loreHome string) Model {
 		input:         ta,
 		focus:         paneInput,
 		focusedExIdx:  -1,
+		historyIdx:    -1,
 		cursorVisible: true,
 	}
 	m.loadUsageStats()
@@ -235,6 +259,24 @@ func (m *Model) syncInputPrompt() {
 	m.input.SetWidth(m.width - len([]rune(prompt)))
 }
 
+// cmdPaneHeight returns the height of the bottom pane in lines (excluding separator).
+// Normal: 1 line (stats). Expanded: capped at 30% of terminal height.
+func (m *Model) cmdPaneHeight() int {
+	if !m.cmdPaneOpen || m.lastCmd == nil {
+		return 1
+	}
+	// 1 (header) + len(output lines), capped at 30% of terminal height.
+	h := 1 + len(m.lastCmd.output)
+	max := m.height * 30 / 100
+	if max < 3 {
+		max = 3
+	}
+	if h > max {
+		h = max
+	}
+	return h
+}
+
 // syncLayout recalculates the conversation viewport height based on current
 // terminal size and textarea height. Call after resize or textarea height change.
 func (m *Model) syncLayout() {
@@ -242,14 +284,17 @@ func (m *Model) syncLayout() {
 	//   top bar:    2 (text + separator)
 	//   conv:       convH
 	//   input pane: 1 (separator) + textarea.Height()
-	//   status bar: 2 (separator + stats line)
+	//   bottom pane: 1 (separator) + cmdPaneHeight()
 	inputH := m.input.Height() + 1
-	convH := m.height - 2 - inputH - 2
+	bottomH := 1 + m.cmdPaneHeight()
+	convH := m.height - 2 - inputH - bottomH
 	if convH < 3 {
 		convH = 3
 	}
 	m.conv.Width = m.width
 	m.conv.Height = convH
+	m.cmdScroll.Width = m.width
+	m.cmdScroll.Height = m.cmdPaneHeight()
 }
 
 // rebuildConvContent re-renders all exchanges into the viewport.
@@ -259,6 +304,22 @@ func (m *Model) rebuildConvContent() {
 	if !m.userScrolled {
 		m.conv.GotoBottom()
 	}
+}
+
+// pushHistory appends val to inputHistory, deduplicating consecutive identical
+// entries and capping at 128. Resets historyIdx to -1.
+func (m *Model) pushHistory(val string) {
+	if val == "" {
+		return
+	}
+	if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != val {
+		m.inputHistory = append(m.inputHistory, val)
+		if len(m.inputHistory) > 128 {
+			m.inputHistory = m.inputHistory[len(m.inputHistory)-128:]
+		}
+	}
+	m.historyIdx = -1
+	m.historySaved = ""
 }
 
 // scrollToBottom forces the viewport to the bottom and clears the userScrolled flag.

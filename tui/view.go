@@ -382,9 +382,54 @@ func renderInputPane(m *Model) string {
 // Status bar
 // =============================================================================
 
-func renderStatusBar(m *Model) string {
+// renderCmdOutput builds the scrollable content for the command pane.
+func renderCmdOutput(m *Model) string {
+	if m.lastCmd == nil {
+		return ""
+	}
+	t := ActiveTheme
+	r := m.lastCmd
+	var dot string
+	if r.isError {
+		dot = fg("#FF6B6B", "●")
+	} else {
+		dot = fg("#A3BE8C", "●")
+	}
+	header := dot + " " + fg(t.Dimmed, r.input)
+	var sb strings.Builder
+	sb.WriteString(header)
+	for _, line := range r.output {
+		sb.WriteByte('\n')
+		if r.isError {
+			sb.WriteString("  " + fg("#FF6B6B", line))
+		} else {
+			sb.WriteString("  " + fg(t.AssistantText, line))
+		}
+	}
+	// Inline cursor after the last output line when a destructive action is pending.
+	if m.pendingAction != nil {
+		sb.WriteString(" " + fg(t.InputText, m.confirmBuf) + "\033[4m \033[24m")
+	}
+	// Half-line padding at the bottom.
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+func renderBottomPane(m *Model) string {
 	t := ActiveTheme
 	sep := fg(t.Dimmed, strings.Repeat("─", m.width))
+	if m.cmdPaneOpen && m.lastCmd != nil {
+		return sep + "\n" + m.cmdScroll.View()
+	}
+	return renderStatsLine(m, sep)
+}
+
+func renderStatusBar(m *Model) string {
+	return renderBottomPane(m)
+}
+
+func renderStatsLine(m *Model, sep string) string {
+	t := ActiveTheme
 	const pad = 1
 
 	// Left: spinner + "streaming" while in flight, empty otherwise.
