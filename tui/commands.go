@@ -432,16 +432,7 @@ func cmdProfileList(m *Model, args []string) cmdResult {
 		if n == 0 {
 			return ""
 		}
-		if n >= 1000000 {
-			if n%1000000 == 0 {
-				return fmt.Sprintf("%dM", n/1000000)
-			}
-			return fmt.Sprintf("%.1fM", float64(n)/1000000)
-		}
-		if n >= 1000 {
-			return fmt.Sprintf("%dk", n/1000)
-		}
-		return fmt.Sprintf("%d", n)
+		return ctxAbbrev(n)
 	}
 
 	type profileRow struct {
@@ -582,13 +573,63 @@ func cmdSystemClear(m *Model) cmdResult {
 
 func cmdConfig(m *Model) cmdResult {
 	cfg := m.eng.Config()
-	lines := []string{
-		fmt.Sprintf("topics root:     %s", cfg.TopicsRoot),
-		fmt.Sprintf("default topic:   %s", orNone(cfg.DefaultTopic)),
-		fmt.Sprintf("default profile: %s", orNone(cfg.DefaultProfile)),
-		fmt.Sprintf("window messages: %d", cfg.WindowMessages),
+
+	row := func(label, value string) string {
+		return fmt.Sprintf("  %-17s%s", label+":", value)
 	}
+
+	lines := []string{
+		row("config file", config.DefaultConfigPath()),
+		row("topics root", cfg.TopicsRoot),
+		row("default topic", orNone(cfg.DefaultTopic)),
+		row("default profile", orNone(cfg.DefaultProfile)),
+		row("window messages", fmt.Sprintf("%d", cfg.WindowMessages)),
+	}
+
+	if len(cfg.Profiles) > 0 {
+		lines = append(lines, fmt.Sprintf("  profiles (%d):", len(cfg.Profiles)))
+
+		// Sort alphabetically.
+		names := make([]string, 0, len(cfg.Profiles))
+		for code := range cfg.Profiles {
+			names = append(names, code)
+		}
+		sort.Strings(names)
+
+		for _, code := range names {
+			p := cfg.Profiles[code]
+			parts := []string{p.Provider, p.Model}
+			if p.Strategy != "" {
+				parts = append(parts, p.Strategy)
+			}
+			if p.MaxContextTokens > 0 {
+				parts = append(parts, fmt.Sprintf("ctx:%s", ctxAbbrev(p.MaxContextTokens)))
+			}
+			if inPer1M, outPer1M, ok := config.ExtractPricing(p.Info); ok {
+				parts = append(parts, fmt.Sprintf("$%.2f/$%.2f", inPer1M, outPer1M))
+			}
+			marker := ""
+			if code == cfg.DefaultProfile {
+				marker = " ←"
+			}
+			lines = append(lines, fmt.Sprintf("    %-16s%s%s", code, strings.Join(parts, ", "), marker))
+		}
+	}
+
 	return okResult("/config", lines)
+}
+
+func ctxAbbrev(n int) string {
+	if n >= 1000000 {
+		if n%1000000 == 0 {
+			return fmt.Sprintf("%dM", n/1000000)
+		}
+		return fmt.Sprintf("%.1fM", float64(n)/1000000)
+	}
+	if n >= 1000 {
+		return fmt.Sprintf("%dk", n/1000)
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 func cmdStatus(m *Model) cmdResult {
