@@ -33,6 +33,8 @@ func (s *SummarizeStrategy) Apply(h *core.History, prompt string) []core.Message
 		return nil
 	}
 
+	msgs := h.NonNoteMsgs()
+
 	verbatimBudget := int(float64(s.Budget) * s.VerbatimRatio)
 
 	summaryText, coversThrough, err := s.Store.LoadSummary(s.TopicName)
@@ -42,19 +44,19 @@ func (s *SummarizeStrategy) Apply(h *core.History, prompt string) []core.Message
 	}
 
 	verbatimStart := 0
-	if coversThrough >= 0 && coversThrough < len(h.Msgs) {
+	if coversThrough >= 0 && coversThrough < len(msgs) {
 		verbatimStart = coversThrough + 1
-	} else if coversThrough >= len(h.Msgs) {
-		verbatimStart = len(h.Msgs)
+	} else if coversThrough >= len(msgs) {
+		verbatimStart = len(msgs)
 	}
-	verbatimMsgs := h.Msgs[verbatimStart:]
+	verbatimMsgs := msgs[verbatimStart:]
 
 	summaryTokens := core.ApproxTokens(summaryText)
 	verbatimTokens := totalTokens(verbatimMsgs)
 
 	needsCompaction := false
 	if summaryText == "" {
-		allTokens := totalTokens(h.Msgs)
+		allTokens := totalTokens(msgs)
 		needsCompaction = allTokens > s.Budget
 	} else {
 		overflow := summaryTokens + verbatimTokens - s.Budget
@@ -66,19 +68,112 @@ func (s *SummarizeStrategy) Apply(h *core.History, prompt string) []core.Message
 	}
 
 	if needsCompaction {
-		newSummary, newCoversThrough, ok := s.compact(h, summaryText, coversThrough, verbatimStart, verbatimBudget)
+		newSummary, newCoversThrough, ok := s.compactMsgs(msgs, summaryText, coversThrough, verbatimStart, verbatimBudget)
 		if ok {
 			summaryText = newSummary
 			coversThrough = newCoversThrough
 			verbatimStart = coversThrough + 1
-			if verbatimStart > len(h.Msgs) {
-				verbatimStart = len(h.Msgs)
+			if verbatimStart > len(msgs) {
+				verbatimStart = len(msgs)
 			}
-			verbatimMsgs = h.Msgs[verbatimStart:]
+			verbatimMsgs = msgs[verbatimStart:]
 		}
 	}
 
 	return s.buildContext(summaryText, verbatimMsgs, verbatimBudget, prompt)
+}
+
+// compactMsgs is like compact but operates on a pre-filtered message slice
+// (notes already excluded) instead of h.Msgs directly.
+func (s *SummarizeStrategy) compactMsgs(
+	msgs []core.Message,
+	existingSummary string,
+	oldCoversThrough int,
+	verbatimStart int,
+	verbatimBudget int,
+) (string, int, bool) {
+	verbatimMsgs := msgs[verbatimStart:]
+	overflowMsgs := identifyOverflow(verbatimMsgs, verbatimBudget)
+	if len(overflowMsgs) == 0 && existingSummary == "" {
+		return existingSummary, oldCoversThrough, false
+	}
+
+	if s.SummarizerBudget > 0 {
+		inputLimit := int(float64(s.SummarizerBudget)*0.8) - core.ApproxTokens(existingSummary)
+		if inputLimit < 0 {
+			inputLimit = 0
+		}
+		overflowMsgs = trimToTokenLimit(overflowMsgs, inputLimit)
+	}
+
+	if s.Out != nil {
+		allTokens := totalTokens(msgs)
+		summaryTokens := core.ApproxTokens(existingSummary)
+		verbatimTokens := totalTokens(verbatimMsgs)
+		fmt.Fprintf(s.Out, "Compacting history for topic '%s'\n", s.TopicName)
+		fmt.Fprintf(s.Out, "  history:         %d messages (~%s tokens)\n", len(msgs), core.FormatTokens(allTokens))
+		if existingSummary != "" {
+			fmt.Fprintf(s.Out, "  summary covers:  messages 1-%d (~%s tokens)\n", oldCoversThrough+1, core.FormatTokens(summaryTokens))
+		}
+		fmt.Fprintf(s.Out, "  verbatim window: %d messages (~%s tokens)\n", len(verbatimMsgs), core.FormatTokens(verbatimTokens))
+		fmt.Fprintf(s.Out, "  compacting:      %d overflow messages\n", len(overflowMsgs))
+	}
+
+	var sb strings.Builder
+	if existingSummary != "" {
+		sb.WriteString("Previous summary:\n")
+		sb.WriteString(existingSummary)
+		sb.WriteString("\n\nNew exchanges to incorporate:\n")
+	}
+	for _, m := range overflowMsgs {
+		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, m.Content))
+	}
+
+	summarizationPrompt := `You are a document summarizer. You will receive a long technical conversation covering multiple topics.
+
+Your task: produce one unified summary covering ALL topics in the conversation from start to finish.
+
+For each distinct topic found in the conversation:
+- Write a topic heading
+- Write 2-4 bullet points with specific facts, exact commands, variable names, or decisions
+
+Rules:
+- Cover every topic present, in the order they appear
+- Preserve exact syntax: commands, flags, function names, variable names, code snippets
+- Do not generalize — state the actual fact
+- No introduction, no conclusion, no meta-commentary
+
+Conversation to summarize:
+
+` + sb.String()
+
+	newSummaryText, _, err := s.SummarizerProvider.Chat(
+		s.Ctx,
+		"",
+		[]core.Message{{Role: core.RoleUser, Content: summarizationPrompt}},
+	)
+	if err != nil {
+		s.warnf("history compaction failed: %v — sending partial context", err)
+		return existingSummary, oldCoversThrough, false
+	}
+
+	newCoversThrough := verbatimStart + len(overflowMsgs) - 1
+
+	if s.Out != nil {
+		remainingVerbatim := msgs[newCoversThrough+1:]
+		remainingTokens := totalTokens(remainingVerbatim)
+		totalCtx := core.ApproxTokens(newSummaryText) + remainingTokens
+		fmt.Fprintf(s.Out, "  summary updated: covers messages 1-%d\n", newCoversThrough+1)
+		fmt.Fprintf(s.Out, "  context window:  ~%s summary + ~%s verbatim = ~%s total\n",
+			core.FormatTokens(core.ApproxTokens(newSummaryText)),
+			core.FormatTokens(remainingTokens),
+			core.FormatTokens(totalCtx))
+	}
+
+	if err := s.Store.SaveSummary(s.TopicName, newSummaryText, newCoversThrough); err != nil {
+		s.warnf("failed to save summary: %v", err)
+	}
+	return newSummaryText, newCoversThrough, true
 }
 
 func (s *SummarizeStrategy) compact(

@@ -75,6 +75,16 @@ func runHeadless(cfg config.Config, cfgPath string) int {
 	if flagTopicResource != "" {
 		return cmdAddResource(st, topicName, flagTopicResource)
 	}
+	if flagNote != "" {
+		return cmdAddNote(cfg, cfgPath, loreHome, topicName, flagNote)
+	}
+	if flagDeleteLast >= 0 {
+		n := flagDeleteLast
+		if n == 0 {
+			n = 1
+		}
+		return cmdDeleteLast(cfg, cfgPath, loreHome, topicName, n, flagForce)
+	}
 
 	// --- chat (needs provider via engine) ---
 	return runChat(cfg, cfgPath, loreHome, topicName)
@@ -511,6 +521,43 @@ func cmdSetSystem(st *store.FileStore, topicName, system, systemFile string) int
 	return 0
 }
 
+func cmdDeleteLast(cfg config.Config, cfgPath, loreHome, topicName string, n int, force bool) int {
+	noun := "exchange"
+	if n > 1 {
+		noun = fmt.Sprintf("%d exchanges", n)
+	}
+	if !force && !confirm(fmt.Sprintf("Delete last %s from topic %q?", noun, topicName)) {
+		fmt.Fprintln(os.Stderr, "aborted")
+		return 0
+	}
+	eng, err := engine.New(cfg, cfgPath, loreHome, topicName, flagProfile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "engine: %v\n", err)
+		return 1
+	}
+	removed, err := eng.DeleteLast(n)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "delete-last: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "deleted %d exchange(s) from topic %q\n", removed, topicName)
+	return 0
+}
+
+func cmdAddNote(cfg config.Config, cfgPath, loreHome, topicName, text string) int {
+	eng, err := engine.New(cfg, cfgPath, loreHome, topicName, flagProfile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "engine: %v\n", err)
+		return 1
+	}
+	if err := eng.AddNote(text); err != nil {
+		fmt.Fprintf(os.Stderr, "note: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "note saved to topic %q\n", topicName)
+	return 0
+}
+
 func cmdAddResource(st *store.FileStore, topicName, sourcePath string) int {
 	if err := st.CreateResource(topicName, sourcePath); err != nil {
 		fmt.Fprintf(os.Stderr, "add resource: %v\n", err)
@@ -602,6 +649,8 @@ func cmdHelpNoun(noun string) int {
 			{"--topic-clear [--force]", "erase history for current topic"},
 			{"--topic-default-set <name>", "persist default topic to config"},
 			{"--topic-resource <file>", "add resource file to current topic"},
+			{"--note <text>", "save a personal note to topic history (not sent to LLM)"},
+			{"--delete-last [n]", "delete last N exchanges from topic history (default 1)"},
 		},
 		"profile": {
 			{"--profile-list", "list all configured profiles"},

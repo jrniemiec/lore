@@ -267,6 +267,37 @@ func (e *Engine) AddResource(sourcePath string) error {
 	return e.st.CreateResource(e.topicName, sourcePath)
 }
 
+// DeleteLast removes the last n exchanges (each being a user+assistant turn or a note)
+// from the topic history and saves to disk. n=0 is treated as n=1.
+func (e *Engine) DeleteLast(n int) (int, error) {
+	if n <= 0 {
+		n = 1
+	}
+	msgs := e.topic.History.Msgs
+	removed := 0
+	for removed < n && len(msgs) > 0 {
+		last := msgs[len(msgs)-1]
+		if last.Role == core.RoleNote {
+			msgs = msgs[:len(msgs)-1]
+		} else if last.Role == core.RoleAssistant && len(msgs) >= 2 &&
+			msgs[len(msgs)-2].Role == core.RoleUser {
+			msgs = msgs[:len(msgs)-2]
+		} else {
+			// Orphan message — remove just it.
+			msgs = msgs[:len(msgs)-1]
+		}
+		removed++
+	}
+	e.topic.History.Msgs = msgs
+	return removed, e.st.SaveHistory(e.topicName, e.topic.History)
+}
+
+// AddNote saves a personal note to the topic history without sending it to the LLM.
+func (e *Engine) AddNote(text string) error {
+	e.topic.History.Append(core.RoleNote, text)
+	return e.st.SaveHistory(e.topicName, e.topic.History)
+}
+
 // --- Profile operations ---------------------------------------------------
 
 // SwitchProfile resolves and activates a profile, rebuilding the provider.

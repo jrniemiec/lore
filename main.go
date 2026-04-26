@@ -36,6 +36,7 @@ var (
 	// display
 	flagSize     int
 	flagHelpNoun string
+	flagHelp     bool
 
 	// admin — read/display
 	flagTopicList    bool
@@ -57,9 +58,13 @@ var (
 	flagProfileDefaultSet string
 	flagTopicDefaultSet   string
 	flagTopicResource     string
+	flagNote              string
+	flagDeleteLast        int
 )
 
 func init() {
+	flag.CommandLine.SetOutput(os.Stdout)
+
 	// mode
 	flag.BoolVar(&flagNoTUI, "no-tui", false, "run in headless mode (no TUI)")
 	flag.BoolVar(&flagNoTUI, "nw", false, "headless mode (short for --no-tui)")
@@ -93,6 +98,7 @@ func init() {
 	// display / help
 	flag.IntVar(&flagSize, "size", 20, "exchanges/lines to show for topic-history/topic-summary")
 	flag.StringVar(&flagHelpNoun, "help-for", "", "show help for a command group: topic|profile|system|session|info|all")
+	flag.BoolVar(&flagHelp, "h", false, "show help (alias for --help-for all)")
 
 	// admin — read/display
 	flag.BoolVar(&flagTopicList, "topic-list", false, "list all topics")
@@ -119,6 +125,8 @@ func init() {
 	flag.StringVar(&flagTopicDefaultSet, "topic-default-set", "", "persist default topic to config")
 	flag.StringVar(&flagTopicResource, "topic-resource", "", "copy file into topic resources/")
 	flag.StringVar(&flagTopicResource, "u", "", "copy file into topic resources/")
+	flag.StringVar(&flagNote, "note", "", "save a personal note to topic history (not sent to LLM)")
+	flag.IntVar(&flagDeleteLast, "delete-last", -1, "delete last N exchanges (default 1) from topic history")
 }
 
 func main() {
@@ -139,6 +147,10 @@ func run() int {
 	}
 	if flagHistoryWindow > 0 {
 		cfg.WindowMessages = flagHistoryWindow
+	}
+
+	if flagHelp {
+		flagHelpNoun = "all"
 	}
 
 	if isHeadless() {
@@ -169,8 +181,8 @@ func isHeadless() bool {
 		flagSystem || flagConfig || flagProfileList || flagStats ||
 		flagStatus || flagTopicNew != "" || flagTopicDelete || flagTopicClear ||
 		flagSystemSet != "" || flagSystemFile != "" || flagProfileDefaultSet != "" ||
-		flagTopicDefaultSet != "" || flagTopicResource != "" || flagAllProfiles ||
-		flagHelpNoun != "" {
+		flagTopicDefaultSet != "" || flagTopicResource != "" || flagNote != "" ||
+		flagDeleteLast >= 0 || flagAllProfiles || flagHelpNoun != "" || flagHelp {
 		return true
 	}
 	return stdinIsPipe()

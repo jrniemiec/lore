@@ -13,7 +13,7 @@ import (
 
 // knownCommands is the set of command names (without leading /) for bare-word recognition.
 var knownCommands = map[string]bool{
-	"exit": true, "help": true,
+	"exit": true, "help": true, "delete-last": true,
 	"topic": true, "topic-switch": true, "topic-new": true, "topic-list": true,
 	"topic-delete": true, "topic-clear": true, "topic-default": true,
 	"topic-default-set": true, "topic-summary": true, "topic-history": true,
@@ -98,6 +98,8 @@ func handleCommand(m *Model, input string) cmdResult {
 		return cmdStats(m)
 
 	// --- help ---
+	case "/delete-last":
+		return cmdDeleteLast(m, args)
 	case "/help":
 		return cmdHelp("/help", args)
 
@@ -668,6 +670,92 @@ func cmdStats(m *Model) cmdResult {
 }
 
 // =============================================================================
+// delete-last
+// =============================================================================
+
+func cmdDeleteLast(m *Model, args []string) cmdResult {
+	n := 1
+	if len(args) > 0 {
+		v, err := strconv.Atoi(args[0])
+		if err != nil || v < 1 {
+			return errResult("/delete-last", "usage: /delete-last [n]  (n must be a positive integer)")
+		}
+		n = v
+	}
+	noun := "last exchange"
+	if n > 1 {
+		noun = fmt.Sprintf("last %d exchanges", n)
+	}
+	m.pendingAction = func() cmdResult {
+		removed, err := m.eng.DeleteLast(n)
+		if err != nil {
+			return errResult("/delete-last", err.Error())
+		}
+		return okResult("/delete-last", []string{fmt.Sprintf("deleted %d exchange(s)", removed)})
+	}
+	m.pendingPost = func(cur *Model) {
+		cur.exchanges = nil
+		cur.loadHistory()
+	}
+	return okResult("/delete-last", []string{
+		fmt.Sprintf("The %s will be permanently deleted.", noun),
+		"[yes] to confirm, other input or Esc to cancel:",
+	})
+}
+
+// =============================================================================
+// completion
+// =============================================================================
+
+// completionEntry is one candidate in the command completion list.
+type completionEntry struct {
+	cmd  string // e.g. "/topic-list"
+	desc string // e.g. "list all topics"
+}
+
+// allCompletions returns the full command catalogue in display order.
+func allCompletions() []completionEntry {
+	return []completionEntry{
+		{"/topic", "show topic info"},
+		{"/topic-switch", "switch to existing topic"},
+		{"/topic-new", "create and switch to new topic"},
+		{"/topic-list", "list all topics"},
+		{"/topic-delete", "delete a topic"},
+		{"/topic-clear", "clear history for current topic"},
+		{"/topic-default", "show default topic"},
+		{"/topic-default-set", "set default topic"},
+		{"/topic-summary", "show current context summary"},
+		{"/topic-history", "show last N exchanges"},
+		{"/topic-resource", "add resource file to topic"},
+		{"/profile", "show profile info"},
+		{"/profile-switch", "switch to named profile"},
+		{"/profile-list", "list all profiles"},
+		{"/profile-default", "show default profile"},
+		{"/profile-default-set", "set default profile"},
+		{"/system", "show system prompt"},
+		{"/system-set", "set system prompt"},
+		{"/system-clear", "remove system prompt"},
+		{"/config", "show resolved configuration"},
+		{"/status", "show effective defaults"},
+		{"/stats", "show usage and cost stats"},
+		{"/help", "show all commands or commands for a group"},
+		{"/delete-last", "delete last N exchanges from history"},
+		{"/exit", "exit lore"},
+	}
+}
+
+// filterCompletions returns entries whose command starts with the given prefix.
+func filterCompletions(prefix string) []completionEntry {
+	var out []completionEntry
+	for _, e := range allCompletions() {
+		if strings.HasPrefix(e.cmd, prefix) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// =============================================================================
 // help
 // =============================================================================
 
@@ -707,10 +795,14 @@ func cmdHelp(cmd string, args []string) cmdResult {
 			{"/status", "show effective defaults"},
 			{"/stats", "show usage and cost stats"},
 			{"/help [group]", "show all commands or commands for a group"},
+			{"/delete-last [n]", "delete last N exchanges from history (default 1)"},
 			{"/exit", "exit lore"},
 		},
+		"notes": {
+			{"// <text>", "save a personal note (not sent to LLM)"},
+		},
 	}
-	order := []string{"topic", "profile", "system", "info"}
+	order := []string{"topic", "profile", "system", "info", "notes"}
 
 	noun := ""
 	if len(args) > 0 {

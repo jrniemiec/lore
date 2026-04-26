@@ -226,20 +226,28 @@ func renderConversation(m *Model) string {
 			return strings.Join(lines, "\n")
 		}
 
-		userRaw := wordWrap(compactLines(ex.userMsg.Content), wrapWidth)
-		userContent := addPrefix(fgLines(t.UserText, userRaw),
-			fg(t.AssistantText, "● "),
-			"  ")
-
-		var asstRaw string
-		if ex.complete {
-			asstRaw = wordWrap(compactLines(ex.asstMsg.Content), wrapWidth)
+		var turnContent string
+		if ex.isNote {
+			noteRaw := wordWrap(compactLines(ex.userMsg.Content), wrapWidth)
+			noteColor := lipgloss.Color("#6B7A8D") // muted blue-grey
+			turnContent = addPrefix(fgLines(noteColor, noteRaw),
+				fg(noteColor, "📌 "),
+				"  ")
 		} else {
-			asstRaw = wordWrap(compactLines(m.streamBuf), wrapWidth)
-		}
-		asstContent := addPrefix(fgLines(t.AssistantText, asstRaw), "  ", "  ")
+			userRaw := wordWrap(compactLines(ex.userMsg.Content), wrapWidth)
+			userContent := addPrefix(fgLines(t.UserText, userRaw),
+				fg(t.AssistantText, "● "),
+				"  ")
 
-		turnContent := userContent + "\n" + asstContent
+			var asstRaw string
+			if ex.complete {
+				asstRaw = wordWrap(compactLines(ex.asstMsg.Content), wrapWidth)
+			} else {
+				asstRaw = wordWrap(compactLines(m.streamBuf), wrapWidth)
+			}
+			asstContent := addPrefix(fgLines(t.AssistantText, asstRaw), "  ", "  ")
+			turnContent = userContent + "\n" + asstContent
+		}
 
 		if focused {
 			tsUser := fg(t.Dimmed, ex.userMsg.Time.Format("15:04"))
@@ -415,9 +423,36 @@ func renderCmdOutput(m *Model) string {
 	return sb.String()
 }
 
+func renderCompletionPane(m *Model) string {
+	t := ActiveTheme
+	var sb strings.Builder
+	// Find longest command for alignment.
+	maxCmd := 0
+	for _, e := range m.completionItems {
+		if len(e.cmd) > maxCmd {
+			maxCmd = len(e.cmd)
+		}
+	}
+	for i, e := range m.completionItems {
+		var line string
+		cmdPart := fmt.Sprintf(" %-*s  ", maxCmd, e.cmd)
+		if i == m.completionIdx {
+			line = "\033[7m" + cmdPart + e.desc + "\033[27m"
+		} else {
+			line = fg(t.InputText, cmdPart) + fg(t.Dimmed, e.desc)
+		}
+		sb.WriteByte('\n')
+		sb.WriteString(line)
+	}
+	return sb.String()
+}
+
 func renderBottomPane(m *Model) string {
 	t := ActiveTheme
 	sep := fg(t.Dimmed, strings.Repeat("─", m.width))
+	if len(m.completionItems) > 0 {
+		return sep + renderCompletionPane(m)
+	}
 	if m.cmdPaneOpen && m.lastCmd != nil {
 		return sep + "\n" + m.cmdScroll.View()
 	}

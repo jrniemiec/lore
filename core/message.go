@@ -6,6 +6,7 @@ const (
 	RoleSystem    = "system"
 	RoleUser      = "user"
 	RoleAssistant = "assistant"
+	RoleNote      = "note" // personal note, never sent to LLM
 )
 
 // Message is a single turn in a conversation.
@@ -32,7 +33,19 @@ func (h *History) Append(role, content string) {
 	})
 }
 
-// ToMessages returns messages covering the last maxUserMessages user turns.
+// NonNoteMsgs returns all messages except notes, for use in LLM context building.
+func (h *History) NonNoteMsgs() []Message {
+	out := make([]Message, 0, len(h.Msgs))
+	for _, m := range h.Msgs {
+		if m.Role != RoleNote {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// ToMessages returns messages covering the last maxUserMessages user turns,
+// excluding note messages which are never sent to the LLM.
 func (h *History) ToMessages(maxUserMessages int) []Message {
 	if h == nil || len(h.Msgs) == 0 {
 		return nil
@@ -48,5 +61,12 @@ func (h *History) ToMessages(maxUserMessages int) []Message {
 			}
 		}
 	}
-	return h.Msgs[start:]
+	msgs := h.Msgs[start:]
+	out := make([]Message, 0, len(msgs))
+	for _, m := range msgs {
+		if m.Role != RoleNote {
+			out = append(out, m)
+		}
+	}
+	return out
 }

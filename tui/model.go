@@ -25,13 +25,14 @@ const (
 	paneCmd
 )
 
-// exchange holds one complete user+assistant turn.
+// exchange holds one complete user+assistant turn, or a standalone note.
 type exchange struct {
 	userMsg  core.Message
-	asstMsg  core.Message // empty while streaming
+	asstMsg  core.Message // empty while streaming or for notes
 	costUSD  float64
 	elapsed  time.Duration
 	complete bool // false while assistant reply is still streaming
+	isNote   bool // true for standalone note entries
 }
 
 // Bubbletea message types.
@@ -88,12 +89,17 @@ type Model struct {
 
 	// pending confirmation (e.g. topic-delete, topic-clear)
 	pendingAction func() cmdResult
+	pendingPost   func(*Model) // model mutation to run after pendingAction, on the real model
 	confirmBuf    string
 
 	// input history (bash-style, in-memory only)
 	inputHistory []string // oldest first, max 128
 	historyIdx   int      // -1 = not browsing
 	historySaved string   // draft saved before browsing started
+
+	// command completion (active when input starts with /)
+	completionItems []completionEntry // filtered list
+	completionIdx   int               // highlighted row (-1 = none)
 }
 
 // cmdResult holds one slash command invocation and its output.
@@ -166,13 +172,18 @@ func spinnerTick() tea.Cmd {
 // loadHistory populates exchanges from the engine's current topic history.
 func (m *Model) loadHistory() {
 	h := m.eng.Topic().History
-	for i := 0; i+1 < len(h.Msgs); i++ {
-		u := h.Msgs[i]
-		a := h.Msgs[i+1]
-		if u.Role == core.RoleUser && a.Role == core.RoleAssistant {
+	for i := 0; i < len(h.Msgs); i++ {
+		msg := h.Msgs[i]
+		if msg.Role == core.RoleNote {
 			m.exchanges = append(m.exchanges, exchange{
-				userMsg:  u,
-				asstMsg:  a,
+				userMsg: msg,
+				isNote:  true,
+				complete: true,
+			})
+		} else if msg.Role == core.RoleUser && i+1 < len(h.Msgs) && h.Msgs[i+1].Role == core.RoleAssistant {
+			m.exchanges = append(m.exchanges, exchange{
+				userMsg:  msg,
+				asstMsg:  h.Msgs[i+1],
 				complete: true,
 			})
 			i++
@@ -262,6 +273,9 @@ func (m *Model) syncInputPrompt() {
 // cmdPaneHeight returns the height of the bottom pane in lines (excluding separator).
 // Normal: 1 line (stats). Expanded: capped at 30% of terminal height.
 func (m *Model) cmdPaneHeight() int {
+	if len(m.completionItems) > 0 {
+		return 1 + len(m.completionItems) // header + one row per match
+	}
 	if !m.cmdPaneOpen || m.lastCmd == nil {
 		return 1
 	}

@@ -114,10 +114,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastCtrlC = now
 			return m, nil
 
-		// Esc: cancel pending action, collapse cmd pane, or return focus to input
+		// Esc: exit completion, cancel pending action, collapse cmd pane, or return focus to input
 		case key.Matches(msg, keys.Dismiss):
-			if m.pendingAction != nil {
+			if len(m.completionItems) > 0 {
+				m.completionItems = nil
+				m.completionIdx = -1
+				m.syncLayout()
+			} else if m.pendingAction != nil {
 				m.pendingAction = nil
+				m.pendingPost = nil
 				m.confirmBuf = ""
 				canceled := cmdResult{input: m.lastCmd.input, output: []string{"operation canceled"}}
 				m.lastCmd = &canceled
@@ -139,9 +144,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rebuildConvContent()
 			}
 
-		// Enter: confirm pending action, send (input pane), or dismiss (conv pane)
+		// Enter: fill completion, confirm pending action, send (input pane), or dismiss (conv pane)
 		case key.Matches(msg, keys.Send):
-			if m.focus == paneCmd && m.pendingAction == nil {
+			if len(m.completionItems) > 0 && m.completionIdx >= 0 {
+				m.input.SetValue(m.completionItems[m.completionIdx].cmd + " ")
+				m.input.CursorEnd()
+				m.completionItems = nil
+				m.completionIdx = -1
+				m.syncLayout()
+			} else if m.focus == paneCmd && m.pendingAction == nil {
 				m.cmdPaneOpen = false
 				m.lastCmd = nil
 				m.focus = paneInput
@@ -152,7 +163,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					result := m.pendingAction()
 					m.pendingAction = nil
 					m.confirmBuf = ""
+					if m.pendingPost != nil {
+						m.pendingPost(&m)
+						m.pendingPost = nil
+					}
 					m.lastCmd = &result
+					m.rebuildConvContent()
 					m.cmdScroll.SetContent(renderCmdOutput(&m))
 					m.cmdScroll.GotoTop()
 				} else {
@@ -175,6 +191,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				val := strings.TrimSpace(m.input.Value())
 				if val == "" {
 					m.scrollToBottom()
+				} else if strings.HasPrefix(val, "//") {
+					// Personal note — save to history, never sent to LLM.
+					text := strings.TrimSpace(val[2:])
+					m.pushHistory(val)
+					m.input.Reset()
+					if text != "" {
+						if err := m.eng.AddNote(text); err == nil {
+							m.exchanges = append(m.exchanges, exchange{
+								userMsg:  core.Message{Role: core.RoleNote, Content: text, Time: time.Now()},
+								isNote:   true,
+								complete: true,
+							})
+							m.rebuildConvContent()
+						}
+					}
 				} else {
 					m.pushHistory(val)
 					if !strings.HasPrefix(val, "/") && looksLikeCommand(val) {
@@ -210,9 +241,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input.InsertString("\n")
 			}
 
-		// Arrow up/down: history in input pane, scroll cmd pane, navigate conv pane, or scroll conv
+		// Arrow up/down: completion, history in input pane, scroll cmd pane, navigate conv pane, or scroll conv
 		case key.Matches(msg, keys.NavUp):
-			if m.focus == paneInput && !strings.Contains(m.input.Value(), "\n") && len(m.inputHistory) > 0 {
+			if len(m.completionItems) > 0 {
+				if m.completionIdx > 0 {
+					m.completionIdx--
+				}
+			} else if m.focus == paneInput && !strings.Contains(m.input.Value(), "\n") && len(m.inputHistory) > 0 {
 				if m.historyIdx == -1 {
 					// Start browsing: save current draft, jump to newest entry.
 					m.historySaved = m.input.Value()
@@ -237,7 +272,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.NavDown):
-			if m.focus == paneInput && m.historyIdx != -1 {
+			if len(m.completionItems) > 0 {
+				if m.completionIdx < len(m.completionItems)-1 {
+					m.completionIdx++
+				}
+			} else if m.focus == paneInput && m.historyIdx != -1 {
 				if m.historyIdx < len(m.inputHistory)-1 {
 					m.historyIdx++
 					m.input.SetValue(m.inputHistory[m.historyIdx])
@@ -298,6 +337,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.historyIdx = -1
 				m.historySaved = ""
 			}
+			if m.focus == paneInput && !m.streaming && m.pendingAction == nil {
+				var inputCmd tea.Cmd
+				m.input, inputCmd = m.input.Update(msg)
+				visualH := m.inputVisualHeight()
+				if visualH != m.input.Height() {
+					m.input.SetHeight(visualH)
+				}
+				cmds = append(cmds, inputCmd)
+				// Update completion list based on new input value.
+				val := m.input.Value()
+				if strings.HasPrefix(val, "/") && !strings.Contains(val, " ") {
+					items := filterCompletions(val)
+					if len(items) == 1 && items[0].cmd == val {
+						// Exact match — no need to show completion.
+						items = nil
+					}
+					m.completionItems = items
+					if len(items) > 0 {
+						m.completionIdx = 0 // pre-highlight first match
+					} else {
+						m.completionIdx = -1
+					}
+				} else {
+					m.completionItems = nil
+					m.completionIdx = -1
+				}
+				m.syncLayout()
+				m.cursorVisible = true
+			}
 			if m.pendingAction != nil {
 				switch msg.Type {
 				case tea.KeyRunes:
@@ -309,17 +377,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.cmdScroll.SetContent(renderCmdOutput(&m))
 					}
 				}
-			} else if m.focus == paneInput && !m.streaming {
-				m.cursorVisible = true // reset blink phase on keystroke
-				var cmd tea.Cmd
-				m.input, cmd = m.input.Update(msg)
-				// Grow/shrink textarea height with visual (wrapped) line count.
-				visualH := m.inputVisualHeight()
-				if visualH != m.input.Height() {
-					m.input.SetHeight(visualH)
-					m.syncLayout()
-				}
-				cmds = append(cmds, cmd)
 			}
 		}
 	}
