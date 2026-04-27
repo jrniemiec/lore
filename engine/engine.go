@@ -292,6 +292,33 @@ func (e *Engine) DeleteLast(n int) (int, error) {
 	return removed, e.st.SaveHistory(e.topicName, e.topic.History)
 }
 
+// DeleteAt removes the entry at exchangeIdx (0-based, matching m.exchanges order)
+// from the topic history and saves to disk.
+func (e *Engine) DeleteAt(exchangeIdx int) error {
+	msgs := e.topic.History.Msgs
+	idx := 0
+	for i := 0; i < len(msgs); {
+		msg := msgs[i]
+		var start, end int
+		if msg.Role == core.RoleNote {
+			start, end = i, i+1
+			i++
+		} else if msg.Role == core.RoleUser && i+1 < len(msgs) && msgs[i+1].Role == core.RoleAssistant {
+			start, end = i, i+2
+			i += 2
+		} else {
+			i++
+			continue
+		}
+		if idx == exchangeIdx {
+			e.topic.History.Msgs = append(msgs[:start:start], msgs[end:]...)
+			return e.st.SaveHistory(e.topicName, e.topic.History)
+		}
+		idx++
+	}
+	return fmt.Errorf("entry index %d out of range", exchangeIdx)
+}
+
 // AddNote saves a personal note to the topic history without sending it to the LLM.
 func (e *Engine) AddNote(text string) error {
 	e.topic.History.Append(core.RoleNote, text)

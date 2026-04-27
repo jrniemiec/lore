@@ -104,10 +104,11 @@ type Model struct {
 
 // cmdResult holds one slash command invocation and its output.
 type cmdResult struct {
-	input   string
-	output  []string
-	isError bool
-	quit    bool // if true, the app should exit
+	input    string
+	output   []string
+	warnLine string // if non-empty, rendered in red before output lines
+	isError  bool
+	quit     bool // if true, the app should exit
 }
 
 // New creates a ready-to-run Model, loading existing history.
@@ -312,22 +313,31 @@ func (m *Model) syncLayout() {
 }
 
 // rebuildConvContent re-renders all exchanges into the viewport.
-// Scrolls to the bottom only when the user hasn't manually scrolled up.
+// When paneConv has focus and an exchange is selected, scrolls to show it.
+// Otherwise scrolls to the bottom only when the user hasn't manually scrolled up.
 func (m *Model) rebuildConvContent() {
-	m.conv.SetContent(renderConversation(m))
-	if !m.userScrolled {
+	content, offsets := renderConversation(m)
+	m.conv.SetContent(content)
+	if m.focus == paneConv && m.focusedExIdx >= 0 && m.focusedExIdx < len(offsets) {
+		m.conv.SetYOffset(offsets[m.focusedExIdx])
+	} else if !m.userScrolled {
 		m.conv.GotoBottom()
 	}
 }
 
 // pushHistory appends val to inputHistory, deduplicating consecutive identical
 // entries and capping at 128. Resets historyIdx to -1.
+// Entries longer than 64 runes are truncated to 60 + " ...".
 func (m *Model) pushHistory(val string) {
 	if val == "" {
 		return
 	}
-	if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != val {
-		m.inputHistory = append(m.inputHistory, val)
+	entry := val
+	if runes := []rune(val); len(runes) > 64 {
+		entry = string(runes[:60]) + " ..."
+	}
+	if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != entry {
+		m.inputHistory = append(m.inputHistory, entry)
 		if len(m.inputHistory) > 128 {
 			m.inputHistory = m.inputHistory[len(m.inputHistory)-128:]
 		}

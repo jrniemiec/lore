@@ -160,9 +160,15 @@ func renderTopBar(m *Model) string {
 		ctxPart +
 		fg(t.TopBarText, " · model: "+m.eng.Profile().Model)
 
-	// Right: scroll position indicator when not at the bottom.
+	// Right: nav mode indicator, then scroll position indicator.
 	var right string
-	if m.userScrolled {
+	if m.focus == paneConv {
+		if m.focusedExIdx >= 0 {
+			right = fgBold(t.InputPrompt, fmt.Sprintf("[ #%d ]", m.focusedExIdx+1))
+		} else {
+			right = fgBold(t.InputPrompt, "[ nav ]")
+		}
+	} else if m.userScrolled {
 		total := m.conv.TotalLineCount()
 		if total > 0 {
 			scrollPct := (m.conv.YOffset * 100) / total
@@ -185,7 +191,7 @@ func renderTopBar(m *Model) string {
 		gap = 1
 	}
 	bar := leftCenter + strings.Repeat(" ", gap) + right + strings.Repeat(" ", pad)
-	return bar + "\n" + fg(t.Dimmed, strings.Repeat("─", m.width))
+	return bar + "\n" + fg(t.BoxBorder, strings.Repeat("─", m.width))
 }
 
 // =============================================================================
@@ -193,7 +199,8 @@ func renderTopBar(m *Model) string {
 // =============================================================================
 
 // renderConversation builds the full conversation string written into the viewport.
-func renderConversation(m *Model) string {
+// It also returns the starting line offset for each exchange, used for scroll-to-focus.
+func renderConversation(m *Model) (string, []int) {
 	t := ActiveTheme
 
 	// Box style is the one place we use lipgloss — structural border only,
@@ -202,10 +209,16 @@ func renderConversation(m *Model) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(t.BoxBorder).
 		Width(m.width - 4)
+	boxStyleRed := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#FF6B6B")).
+		Width(m.width - 4)
 
-	var sb strings.Builder
+	parts := make([]string, len(m.exchanges))
+
 	for i, ex := range m.exchanges {
 		focused := m.focus == paneConv && m.focusedExIdx == i
+		deleting := m.pendingAction != nil && m.focusedExIdx == i
 
 		// Layout: col 1 = bullet (●), col 2 = space, col 3+ = text.
 		// Both user and assistant text start at column 3 (2-char prefix).
@@ -249,23 +262,33 @@ func renderConversation(m *Model) string {
 			turnContent = userContent + "\n" + asstContent
 		}
 
-		if focused {
-			tsUser := fg(t.Dimmed, ex.userMsg.Time.Format("15:04"))
-			tsAsst := ""
-			if ex.complete {
-				tsAsst = " → " + fg(t.Dimmed, ex.asstMsg.Time.Format("15:04"))
+		if focused || deleting {
+			header := fg(t.Dimmed, ex.userMsg.Time.Format("15:04"))
+			if deleting {
+				turnContent = boxStyleRed.Render(header + "\n" + turnContent)
+			} else {
+				turnContent = boxStyle.Render(header + "\n" + turnContent)
 			}
-			header := tsUser + tsAsst
-			turnContent = boxStyle.Render(header + "\n" + turnContent)
 		}
 
-		sb.WriteString(turnContent)
-		if i < len(m.exchanges)-1 {
-			sb.WriteString("\n\n")
+		parts[i] = turnContent
+	}
+
+	// Compute starting line offset for each exchange.
+	// Exchanges are joined by "\n\n": the first "\n" ends the last line of the
+	// previous exchange and the second "\n" inserts one blank separator line.
+	// So each exchange starts at: offset[i] = offset[i-1] + lineCount(parts[i-1]) + 1
+	// where lineCount(s) = strings.Count(s, "\n") + 1.
+	offsets := make([]int, len(parts))
+	lineOffset := 0
+	for i, part := range parts {
+		offsets[i] = lineOffset
+		if i < len(parts)-1 {
+			lineOffset += strings.Count(part, "\n") + 2 // lines in part + 1 blank separator
 		}
 	}
 
-	return sb.String()
+	return strings.Join(parts, "\n\n"), offsets
 }
 
 func renderSpinner(m *Model) string {
@@ -288,7 +311,12 @@ func renderSpinner(m *Model) string {
 // The textarea model is kept for editing state and cursor position only.
 func renderInputPane(m *Model) string {
 	t := ActiveTheme
-	sep := fg(t.Dimmed, strings.Repeat("─", m.width))
+	var sep string
+	if m.focus == paneConv {
+		sep = fg(t.InputPrompt, strings.Repeat("─", m.width))
+	} else {
+		sep = fg(t.BoxBorder, strings.Repeat("─", m.width))
+	}
 
 	prompt := m.inputPrompt()
 	promptRunes := []rune(prompt)
@@ -406,12 +434,28 @@ func renderCmdOutput(m *Model) string {
 	header := dot + " " + fg(t.Dimmed, r.input)
 	var sb strings.Builder
 	sb.WriteString(header)
-	for _, line := range r.output {
+	if r.warnLine != "" {
+		// Render warning and first output line together on one line.
 		sb.WriteByte('\n')
-		if r.isError {
-			sb.WriteString("  " + fg("#FF6B6B", line))
-		} else {
+		first := ""
+		startIdx := 0
+		if len(r.output) > 0 {
+			first = "  " + fg(t.AssistantText, r.output[0])
+			startIdx = 1
+		}
+		sb.WriteString("  " + fg("#FF6B6B", r.warnLine) + first)
+		for _, line := range r.output[startIdx:] {
+			sb.WriteByte('\n')
 			sb.WriteString("  " + fg(t.AssistantText, line))
+		}
+	} else {
+		for _, line := range r.output {
+			sb.WriteByte('\n')
+			if r.isError {
+				sb.WriteString("  " + fg("#FF6B6B", line))
+			} else {
+				sb.WriteString("  " + fg(t.AssistantText, line))
+			}
 		}
 	}
 	// Inline cursor after the last output line when a destructive action is pending.
@@ -449,7 +493,7 @@ func renderCompletionPane(m *Model) string {
 
 func renderBottomPane(m *Model) string {
 	t := ActiveTheme
-	sep := fg(t.Dimmed, strings.Repeat("─", m.width))
+	sep := fg(t.BoxBorder, strings.Repeat("─", m.width))
 	if len(m.completionItems) > 0 {
 		return sep + renderCompletionPane(m)
 	}
@@ -488,15 +532,15 @@ func renderStatsLine(m *Model, sep string) string {
 			cost := config.CalcCost(r.Usage.InputTokens, r.Usage.OutputTokens, inPer1M, outPer1M)
 			s += " · " + config.FormatCost(cost)
 		}
-		center = fg(t.Dimmed, s)
+		center = fg("#6B7A8D", s)
 	}
 
 	// Right: topic + global cumulative stats.
 	var right string
 	if m.topicStats.Calls > 0 {
-		right = fg(t.Dimmed, fmt.Sprintf("topic: %d · %s",
+		right = fg("#6B7A8D", fmt.Sprintf("topic: %d · %s",
 			m.topicStats.Calls, config.FormatCost(m.topicStats.CostUSD)))
-		right += fg(t.Dimmed, fmt.Sprintf("  total: %d · %s",
+		right += fg("#6B7A8D", fmt.Sprintf("  total: %d · %s",
 			m.sessionStats.Calls, config.FormatCost(m.sessionStats.CostUSD)))
 	}
 

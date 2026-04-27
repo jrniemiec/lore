@@ -124,18 +124,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pendingAction = nil
 				m.pendingPost = nil
 				m.confirmBuf = ""
+				m.focusedExIdx = -1
 				canceled := cmdResult{input: m.lastCmd.input, output: []string{"operation canceled"}}
 				m.lastCmd = &canceled
 				m.cmdScroll.SetContent(renderCmdOutput(&m))
 				m.cmdScroll.GotoTop()
 				m.focus = paneInput
 				m.input.Focus()
+				m.rebuildConvContent()
 				m.syncLayout()
 			} else if m.cmdPaneOpen {
 				m.cmdPaneOpen = false
 				m.lastCmd = nil
 				m.focus = paneInput
 				m.input.Focus()
+				m.syncLayout()
+			} else if m.focus == paneInput && m.input.Value() != "" {
+				m.input.Reset()
+				m.input.SetHeight(1)
+				m.completionItems = nil
+				m.completionIdx = -1
+				m.historyIdx = -1
+				m.historySaved = ""
 				m.syncLayout()
 			} else {
 				m.focus = paneInput
@@ -174,6 +184,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.pendingAction = nil
 					m.confirmBuf = ""
+					m.focusedExIdx = -1
 					canceled := cmdResult{input: m.lastCmd.input, output: []string{"operation canceled"}}
 					m.lastCmd = &canceled
 					m.cmdScroll.SetContent(renderCmdOutput(&m))
@@ -181,6 +192,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.focus = paneInput
 				m.input.Focus()
+				m.rebuildConvContent()
 				m.syncLayout()
 			} else if m.focus == paneConv {
 				m.focus = paneInput
@@ -247,25 +259,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.completionIdx > 0 {
 					m.completionIdx--
 				}
-			} else if m.focus == paneInput && !strings.Contains(m.input.Value(), "\n") && len(m.inputHistory) > 0 {
-				if m.historyIdx == -1 {
-					// Start browsing: save current draft, jump to newest entry.
-					m.historySaved = m.input.Value()
-					m.historyIdx = len(m.inputHistory) - 1
-				} else if m.historyIdx > 0 {
+			} else if m.focus == paneInput && m.historyIdx != -1 {
+				// Already browsing — continue going back.
+				if m.historyIdx > 0 {
 					m.historyIdx--
 				}
+				m.input.SetValue(m.inputHistory[m.historyIdx])
+				m.input.CursorEnd()
+			} else if m.focus == paneInput && m.input.Value() == "" && len(m.inputHistory) > 0 {
+				// Start history browsing from an empty input.
+				m.historySaved = ""
+				m.historyIdx = len(m.inputHistory) - 1
 				m.input.SetValue(m.inputHistory[m.historyIdx])
 				m.input.CursorEnd()
 			} else if m.focus == paneCmd {
 				m.cmdScroll.ScrollUp(3)
 			} else if m.focus == paneConv {
+				prev := m.focusedExIdx
 				if m.focusedExIdx < 0 {
 					m.focusedExIdx = len(m.exchanges) - 1
+					m.rebuildConvContent()
 				} else if m.focusedExIdx > 0 {
 					m.focusedExIdx--
+					m.rebuildConvContent()
+				} else {
+					// Already at first exchange — scroll up within it.
+					m.conv.ScrollUp(3)
 				}
-				m.rebuildConvContent()
+				_ = prev
 			} else {
 				m.userScrolled = true
 				m.conv.ScrollUp(3)
@@ -293,8 +314,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.focus == paneConv {
 				if m.focusedExIdx >= 0 && m.focusedExIdx < len(m.exchanges)-1 {
 					m.focusedExIdx++
+					m.rebuildConvContent()
+				} else {
+					// Already at last exchange — scroll down within it.
+					m.conv.ScrollDown(3)
 				}
-				m.rebuildConvContent()
 			} else {
 				m.conv.ScrollDown(3)
 				if m.conv.AtBottom() {
@@ -325,6 +349,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.ClearScreen):
 			return m, tea.ClearScreen
 
+		// Tab: cycle focus between input and conv pane
+		case key.Matches(msg, keys.FocusNext):
+			if m.focus == paneInput {
+				m.focus = paneConv
+				m.input.Blur()
+				if m.focusedExIdx < 0 && len(m.exchanges) > 0 {
+					m.focusedExIdx = len(m.exchanges) - 1
+				}
+				m.rebuildConvContent()
+			} else if m.focus == paneConv {
+				m.focus = paneInput
+				m.focusedExIdx = -1
+				m.input.Focus()
+				m.rebuildConvContent()
+			}
+
 		// Ctrl+T / Ctrl+P: topic/profile switching (stub — popup in future)
 		case key.Matches(msg, keys.SwitchTopic):
 			// TODO: topic picker popup
@@ -332,6 +372,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// TODO: profile picker popup
 
 		default:
+			// d: delete focused entry when in nav mode.
+			if m.focus == paneConv && m.focusedExIdx >= 0 && m.pendingAction == nil &&
+				msg.Type == tea.KeyRunes && string(msg.Runes) == "d" {
+				exIdx := m.focusedExIdx
+				eng := m.eng
+				m.pendingAction = func() cmdResult {
+					if err := eng.DeleteAt(exIdx); err != nil {
+						return cmdResult{input: fmt.Sprintf("delete entry #%d", exIdx+1), output: []string{err.Error()}, isError: true}
+					}
+					return cmdResult{input: fmt.Sprintf("delete entry #%d", exIdx+1), output: []string{"deleted"}}
+				}
+				m.pendingPost = func(model *Model) {
+					model.exchanges = append(model.exchanges[:exIdx], model.exchanges[exIdx+1:]...)
+					if model.focusedExIdx >= len(model.exchanges) {
+						model.focusedExIdx = len(model.exchanges) - 1
+					}
+					if len(model.exchanges) == 0 {
+						model.focus = paneInput
+						model.focusedExIdx = -1
+						model.input.Focus()
+					}
+				}
+				m.lastCmd = &cmdResult{
+					input:    fmt.Sprintf("delete entry #%d", exIdx+1),
+					warnLine: fmt.Sprintf("Deleting entry #%d ...", exIdx+1),
+					output:   []string{"[yes] to confirm, other or Esc to cancel:"},
+				}
+				m.cmdPaneOpen = true
+				m.focus = paneCmd
+				m.input.Blur()
+				m.rebuildConvContent()
+				m.syncLayout()
+				m.cmdScroll.SetContent(renderCmdOutput(&m))
+				m.cmdScroll.GotoTop()
+				break
+			}
 			// Any edit while browsing history exits history mode, keeping current entry.
 			if m.focus == paneInput && m.historyIdx != -1 {
 				m.historyIdx = -1

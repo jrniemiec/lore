@@ -15,6 +15,7 @@ type keyMap struct {
 	ScrollUp      key.Binding
 	ScrollDown    key.Binding
 	Dismiss       key.Binding
+	FocusNext     key.Binding
 }
 
 var keys = keyMap{
@@ -61,5 +62,9 @@ var keys = keyMap{
 	Dismiss: key.NewBinding(
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "back to input"),
+	),
+	FocusNext: key.NewBinding(
+		key.WithKeys("tab"),
+		key.WithHelp("tab", "cycle focus: input ↔ conversation"),
 	),
 }
