@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.vom/jrniemiec/lore/config"
 	"github.vom/jrniemiec/lore/core"
@@ -174,7 +176,16 @@ func doChat(e *engine.Engine, prompt string) int {
 		response strings.Builder
 	)
 
+	if !flagQuiet {
+		fmt.Fprintf(os.Stderr, "[topic: %s  model: %s]\n", e.TopicName(), e.Profile().Model)
+	}
+
 	ctx := interruptContext()
+
+	color := ""
+	if !flagQuiet {
+		color = ansiColor(e.Profile().Color)
+	}
 
 	if flagNoStream || flagJSON {
 		// Collect full response then print.
@@ -185,22 +196,35 @@ func doChat(e *engine.Engine, prompt string) int {
 		}
 		// The response was persisted internally; we need it for JSON output.
 		// Re-read from history (last assistant message).
-		if flagJSON {
-			h := e.Topic().History
-			if len(h.Msgs) > 0 {
-				last := h.Msgs[len(h.Msgs)-1]
-				if last.Role == core.RoleAssistant {
-					response.WriteString(last.Content)
-				}
+		h := e.Topic().History
+		if len(h.Msgs) > 0 {
+			last := h.Msgs[len(h.Msgs)-1]
+			if last.Role == core.RoleAssistant {
+				response.WriteString(last.Content)
+			}
+		}
+		if !flagJSON {
+			if color != "" {
+				fmt.Print(color)
+			}
+			fmt.Println(response.String())
+			if color != "" {
+				fmt.Print("\x1b[0m")
 			}
 		}
 	} else {
 		// Stream tokens directly to stdout.
+		if color != "" {
+			fmt.Print(color)
+		}
 		onDelta := func(delta string) error {
 			fmt.Print(delta)
 			return nil
 		}
 		result, err = e.Chat(ctx, prompt, opts, onDelta)
+		if color != "" {
+			fmt.Print("\x1b[0m")
+		}
 		fmt.Println() // newline after streamed output
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "chat: %v\n", err)
@@ -212,21 +236,46 @@ func doChat(e *engine.Engine, prompt string) int {
 		return printChatJSON(response.String(), result, e.Profile())
 	}
 
-	if flagNoStream && !flagJSON {
-		// Print the buffered response.
+	if !flagQuiet {
+		printStats(result, e.Profile())
+	}
+
+	if flagTTS {
 		h := e.Topic().History
 		if len(h.Msgs) > 0 {
 			last := h.Msgs[len(h.Msgs)-1]
 			if last.Role == core.RoleAssistant {
-				fmt.Println(last.Content)
+				sayText(last.Content)
 			}
 		}
 	}
 
-	if !flagQuiet {
-		printStats(result, e.Profile())
-	}
 	return 0
+}
+
+// sayText pipes text through say(1), blocking until playback completes.
+func sayText(text string) {
+	cmd := exec.Command("say", "-r", "200")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Stdin = strings.NewReader(core.TTSStrip(text))
+
+	// Kill the process group on SIGINT so say doesn't outlive the parent.
+	done := make(chan struct{})
+	go func() {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt)
+		select {
+		case <-c:
+			if cmd.Process != nil {
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			}
+		case <-done:
+		}
+		signal.Stop(c)
+	}()
+
+	_ = cmd.Run()
+	close(done)
 }
 
 func printChatJSON(response string, result engine.ChatResult, profile config.ProviderProfile) int {
@@ -735,6 +784,10 @@ func cmdHelpNoun(noun string) int {
 			{"--skip-history / -X", "do not persist this exchange to history"},
 			{"--no-stream / -N", "disable streaming; print full response at once"},
 			{"--all-profiles / -A", "run prompt against all configured profiles"},
+			{"--tts", "speak the response aloud via say(1) after completion"},
+			{"--json", "output result as JSON"},
+			{"--quiet / -q", "suppress topic/model header and stats"},
+			{"--force / -f", "skip confirmation prompts"},
 			{"--note <text>", "save a personal note to topic history (not sent to LLM)"},
 			{"--delete-last [n]", "delete last N exchanges from topic history (default 1)"},
 		},
@@ -805,6 +858,46 @@ func printHelpGroup(noun string, entries []helpEntry) {
 		fmt.Printf("  %-38s  %s\n", e.flag, e.desc)
 	}
 	fmt.Println()
+}
+
+// ansiColor maps a color name to an ANSI foreground escape sequence.
+func ansiColor(name string) string {
+	switch name {
+	case "black":
+		return "\x1b[30m"
+	case "red":
+		return "\x1b[31m"
+	case "green":
+		return "\x1b[32m"
+	case "yellow":
+		return "\x1b[33m"
+	case "blue":
+		return "\x1b[34m"
+	case "magenta":
+		return "\x1b[35m"
+	case "cyan":
+		return "\x1b[36m"
+	case "white":
+		return "\x1b[37m"
+	case "bright_black", "gray", "grey":
+		return "\x1b[90m"
+	case "bright_red":
+		return "\x1b[91m"
+	case "bright_green":
+		return "\x1b[92m"
+	case "bright_yellow":
+		return "\x1b[93m"
+	case "bright_blue":
+		return "\x1b[94m"
+	case "bright_magenta":
+		return "\x1b[95m"
+	case "bright_cyan":
+		return "\x1b[96m"
+	case "bright_white":
+		return "\x1b[97m"
+	default:
+		return ""
+	}
 }
 
 // interruptContext returns a context that is cancelled on SIGINT.

@@ -608,7 +608,7 @@ func renderStatsLine(m *Model, sep string) string {
 	// Left: spinner + "streaming" while in flight, TTS indicator, or auto-mode badge.
 	var left string
 	if m.ttsCmd != nil {
-		left = renderWaveIndicator(m.spinnerFrame, fmt.Sprintf("♪ speaking #%d", m.ttsExIdx+1), t.StreamingText, t.Dimmed)
+		left = renderWaveIndicator(m.spinnerFrame, fmt.Sprintf("♪ #%d  %d wpm  [ slower  ] faster", m.ttsExIdx+1, m.ttsRate), t.StreamingText, t.Dimmed)
 	} else if m.streaming {
 		left = renderWaveIndicator(m.spinnerFrame, "streaming", t.StreamingText, t.Dimmed)
 	}

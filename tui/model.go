@@ -4,6 +4,7 @@ import (
 	"context"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -45,7 +46,10 @@ type streamDoneMsg struct {
 	err    error
 }
 type spinnerTickMsg struct{}
-type ttsDoneMsg struct{ err error }
+type ttsDoneMsg struct {
+	err error
+	gen int // generation counter; ignored if != model's current ttsGen
+}
 
 // Model is the root Bubbletea application model.
 type Model struct {
@@ -109,6 +113,8 @@ type Model struct {
 	ttsExIdx int       // exchange being spoken (-1 = none)
 	ttsQueue []int     // pending exchange indices for play-all
 	ttsAuto  bool      // auto-speak each response as it completes
+	ttsRate  int       // words-per-minute for say(1) (default 200)
+	ttsGen   int       // incremented on each startTTS; stale ttsDoneMsgs are ignored
 
 	// command completion (active when input starts with /)
 	completionItems []completionEntry // filtered list
@@ -166,6 +172,7 @@ func New(eng *engine.Engine, cfg config.Config, loreHome string) Model {
 		focusedExIdx:  -1,
 		historyIdx:    -1,
 		ttsExIdx:      -1,
+		ttsRate:       200,
 		cursorVisible: true,
 	}
 	m.loadUsageStats()
@@ -358,6 +365,21 @@ func (m *Model) pushHistory(val string) {
 	}
 	m.historyIdx = -1
 	m.historySaved = ""
+}
+
+// killTTS stops any in-flight TTS process and clears all TTS state.
+// Sets ttsCmd to nil first so the returning ttsDoneMsg knows it was killed.
+func (m *Model) killTTS() {
+	if m.ttsCmd != nil {
+		cmd := m.ttsCmd
+		m.ttsCmd = nil
+		m.ttsExIdx = -1
+		m.ttsQueue = nil
+		// Kill the entire process group (say forks a child for audio synthesis).
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}
 }
 
 // scrollToBottom forces the viewport to the bottom and clears the userScrolled flag.

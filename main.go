@@ -20,6 +20,7 @@ var (
 	flagProfile string
 	flagTopic   string
 	flagModel   string
+	flagTTS     bool
 
 	// chat
 	flagStrategy      string
@@ -79,6 +80,7 @@ func init() {
 	flag.StringVar(&flagTopic, "t", "", "topic name")
 	flag.StringVar(&flagModel, "model", "", "model name override (within active profile)")
 	flag.StringVar(&flagModel, "m", "", "model name override (within active profile)")
+	flag.BoolVar(&flagTTS, "tts", false, "speak the response aloud via say(1) after completion")
 
 	// chat
 	flag.StringVar(&flagStrategy, "strategy", "", "context strategy: tail|token-budget|summarize")
@@ -157,7 +159,8 @@ func run() int {
 	}
 
 	if flagHelp {
-		flagHelpNoun = "all"
+		flag.Usage()
+		return 0
 	}
 
 	if isHeadless() {

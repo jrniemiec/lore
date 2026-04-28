@@ -3,9 +3,9 @@ package tui
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -94,6 +94,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// --- TTS done ---
 	case ttsDoneMsg:
+		if msg.gen != m.ttsGen {
+			break // stale message from a killed process — ignore
+		}
 		m.ttsCmd = nil
 		m.ttsExIdx = -1
 		// Drain queue if play-all is active.
@@ -153,6 +156,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
+		// [ / ] — adjust TTS speed while playing; restart at new rate.
+		if msg.Type == tea.KeyRunes && m.ttsCmd != nil {
+			switch string(msg.Runes) {
+			case "[":
+				if m.ttsRate > 80 {
+					m.ttsRate -= 20
+				}
+				exIdx := m.ttsExIdx
+				m.killTTS()
+				cmds = append(cmds, startTTS(ttsText(&m.exchanges[exIdx]), exIdx, &m))
+				return m, tea.Batch(cmds...)
+			case "]":
+				if m.ttsRate < 500 {
+					m.ttsRate += 20
+				}
+				exIdx := m.ttsExIdx
+				m.killTTS()
+				cmds = append(cmds, startTTS(ttsText(&m.exchanges[exIdx]), exIdx, &m))
+				return m, tea.Batch(cmds...)
+			}
+		}
+
 		switch {
 
 		// Ctrl+C: stop TTS, cancel stream, or quit
@@ -171,6 +196,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			now := time.Now()
 			if now.Sub(m.lastCtrlC) < 500*time.Millisecond {
+				m.killTTS()
 				return m, tea.Quit
 			}
 			m.lastCtrlC = now
@@ -303,6 +329,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if strings.HasPrefix(val, "/") {
 						result := handleCommand(&m, val)
 						if result.quit {
+							m.killTTS()
 							return m, tea.Quit
 						}
 						m.lastCmd = &result
@@ -642,27 +669,33 @@ func (m *Model) sendMessage() tea.Cmd {
 // ttsText builds the plain text to speak for an exchange.
 func ttsText(ex *exchange) string {
 	if ex.isNote {
-		return ex.userMsg.Content
+		return ttsStrip(ex.userMsg.Content)
 	}
 	parts := []string{ex.userMsg.Content}
 	if ex.asstMsg.Content != "" {
 		parts = append(parts, ex.asstMsg.Content)
 	}
-	return strings.Join(parts, "\n\n")
+	return ttsStrip(strings.Join(parts, "\n\n"))
 }
 
-// startTTS launches tts-play with the given text via stdin and returns a Cmd
+func ttsStrip(s string) string { return core.TTSStrip(s) }
+
+// startTTS launches the TTS backend with the given text via stdin and returns a Cmd
 // that sends ttsDoneMsg when the process exits.
 func startTTS(text string, exIdx int, m *Model) tea.Cmd {
-	ttsPath := os.ExpandEnv("$HOME/dev/bin/tts-play")
-	cmd := exec.Command(ttsPath, "-s", "1.4", "-v", "1.2")
+	cmd := exec.Command("say", "-r", fmt.Sprintf("%d", m.ttsRate))
+	// Put the process in its own process group so killTTS() can kill the
+	// entire group (say forks a child for audio synthesis).
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = strings.NewReader(text)
+	m.ttsGen++
+	gen := m.ttsGen
 	m.ttsCmd = cmd
 	m.ttsExIdx = exIdx
 	m.rebuildConvContent()
 	return func() tea.Msg {
 		err := cmd.Run()
-		return ttsDoneMsg{err: err}
+		return ttsDoneMsg{err: err, gen: gen}
 	}
 }
 
