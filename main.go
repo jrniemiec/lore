@@ -19,6 +19,7 @@ var (
 	// core
 	flagProfile string
 	flagTopic   string
+	flagModel   string
 
 	// chat
 	flagStrategy      string
@@ -76,6 +77,8 @@ func init() {
 	flag.StringVar(&flagProfile, "p", "", "provider profile code")
 	flag.StringVar(&flagTopic, "topic", "", "topic name")
 	flag.StringVar(&flagTopic, "t", "", "topic name")
+	flag.StringVar(&flagModel, "model", "", "model name override (within active profile)")
+	flag.StringVar(&flagModel, "m", "", "model name override (within active profile)")
 
 	// chat
 	flag.StringVar(&flagStrategy, "strategy", "", "context strategy: tail|token-budget|summarize")
@@ -167,6 +170,12 @@ func run() int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "engine: %v\n", err)
 		return 1
+	}
+	if flagModel != "" {
+		if err := e.OverrideModel(flagModel); err != nil {
+			fmt.Fprintf(os.Stderr, "model override: %v\n", err)
+			return 1
+		}
 	}
 	if err := tui.Start(e, cfg, loreHome); err != nil {
 		fmt.Fprintf(os.Stderr, "tui: %v\n", err)

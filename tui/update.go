@@ -82,6 +82,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessionStats.InputTokens += msg.result.Usage.InputTokens
 			m.sessionStats.OutputTokens += msg.result.Usage.OutputTokens
 			m.sessionStats.CostUSD += m.topicStats.CostUSD
+			// Auto-speak the completed exchange if TTS auto-mode is on.
+			if m.ttsAuto && m.ttsCmd == nil && len(m.exchanges) > 0 {
+				exIdx := len(m.exchanges) - 1
+				cmds = append(cmds, startTTS(ttsText(&m.exchanges[exIdx]), exIdx, &m))
+			}
 		}
 		m.streamBuf = ""
 		m.rebuildConvContent()

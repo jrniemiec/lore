@@ -108,6 +108,7 @@ type Model struct {
 	ttsCmd   *exec.Cmd // non-nil while TTS is playing
 	ttsExIdx int       // exchange being spoken (-1 = none)
 	ttsQueue []int     // pending exchange indices for play-all
+	ttsAuto  bool      // auto-speak each response as it completes
 
 	// command completion (active when input starts with /)
 	completionItems []completionEntry // filtered list

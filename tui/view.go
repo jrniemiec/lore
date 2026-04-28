@@ -601,12 +601,14 @@ func renderStatsLine(m *Model, sep string) string {
 	t := ActiveTheme
 	const pad = 1
 
-	// Left: spinner + "streaming" while in flight, or TTS indicator.
+	// Left: spinner + "streaming" while in flight, TTS indicator, or auto-mode badge.
 	var left string
 	if m.ttsCmd != nil {
 		left = renderWaveIndicator(m.spinnerFrame, fmt.Sprintf("♪ speaking #%d", m.ttsExIdx+1), t.StreamingText, t.Dimmed)
 	} else if m.streaming {
 		left = renderWaveIndicator(m.spinnerFrame, "streaming", t.StreamingText, t.Dimmed)
+	} else if m.ttsAuto {
+		left = fg(t.StreamingText, "♪ auto")
 	}
 
 	// Center: per-request stats — shown permanently after first response.

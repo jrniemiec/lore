@@ -343,6 +343,22 @@ func (e *Engine) AddNote(text string) error {
 
 // --- Profile operations ---------------------------------------------------
 
+// OverrideModel replaces the model name in the active profile and rebuilds
+// the provider. Other profile settings (strategy, context limits, etc.) are
+// preserved. Used when --model / -m is passed on the command line.
+func (e *Engine) OverrideModel(model string) error {
+	if model == "" {
+		return nil
+	}
+	e.profile.Model = model
+	prov, err := provider.New(e.profile)
+	if err != nil {
+		return fmt.Errorf("init provider with model %q: %w", model, err)
+	}
+	e.prov = prov
+	return nil
+}
+
 // SwitchProfile resolves and activates a profile, rebuilding the provider.
 func (e *Engine) SwitchProfile(code string) error {
 	resolvedCode, prof, err := config.ResolveProfile(e.cfg, code)

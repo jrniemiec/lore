@@ -129,6 +129,12 @@ func runChat(cfg config.Config, cfgPath, loreHome, topicName string) int {
 		fmt.Fprintf(os.Stderr, "engine: %v\n", err)
 		return 1
 	}
+	if flagModel != "" {
+		if err := e.OverrideModel(flagModel); err != nil {
+			fmt.Fprintf(os.Stderr, "model override: %v\n", err)
+			return 1
+		}
+	}
 
 	return doChat(e, prompt)
 }
@@ -722,6 +728,7 @@ func cmdHelpNoun(noun string) int {
 			{"--system-file <path> / -S", "set system prompt from file"},
 		},
 		"session": {
+			{"--model <name> / -m", "override model name within active profile"},
 			{"--strategy <name>", "override context strategy: tail|token-budget|summarize"},
 			{"--context-limit <n>", "override token budget for this invocation"},
 			{"--history-window <n>", "override tail window (number of past user turns)"},

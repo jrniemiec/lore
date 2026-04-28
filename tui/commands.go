@@ -20,6 +20,7 @@ var knownCommands = map[string]bool{
 	"topic-default-set": true, "topic-summary": true, "topic-history": true,
 	"topic-resource": true,
 	"resource-list": true, "resource-add": true, "resource-remove": true,
+	"tts": true,
 	"profile": true, "profile-switch": true, "profile-list": true,
 	"profile-default": true, "profile-default-set": true,
 	"system": true, "system-set": true, "system-clear": true,
@@ -96,6 +97,8 @@ func handleCommand(m *Model, input string) cmdResult {
 		return cmdSystemClear(m)
 
 	// --- view ---
+	case "/tts":
+		return cmdTTS(m, args)
 	case "/fold-all":
 		return cmdFoldAll(m)
 	case "/play-all":
@@ -764,6 +767,41 @@ func cmdDeleteLast(m *Model, args []string) cmdResult {
 	})
 }
 
+func cmdTTS(m *Model, args []string) cmdResult {
+	sub := ""
+	if len(args) > 0 {
+		sub = strings.ToLower(args[0])
+	}
+	switch sub {
+	case "on":
+		m.ttsAuto = true
+		return okResult("/tts on", []string{"TTS auto-mode enabled — each response will be spoken automatically"})
+	case "off":
+		m.ttsAuto = false
+		// Stop any current playback.
+		if m.ttsCmd != nil {
+			_ = m.ttsCmd.Process.Kill()
+			m.ttsCmd = nil
+			m.ttsExIdx = -1
+			m.ttsQueue = nil
+			m.rebuildConvContent()
+		}
+		return okResult("/tts off", []string{"TTS auto-mode disabled"})
+	case "":
+		// Toggle.
+		if m.ttsAuto {
+			return cmdTTS(m, []string{"off"})
+		}
+		return cmdTTS(m, []string{"on"})
+	default:
+		state := "off"
+		if m.ttsAuto {
+			state = "on"
+		}
+		return errResult("/tts "+sub, fmt.Sprintf("usage: /tts [on|off]  (currently %s)", state))
+	}
+}
+
 func cmdFoldAll(m *Model) cmdResult {
 	// Count entries that are long enough to fold.
 	isFoldable := func(content string) bool {
@@ -861,6 +899,7 @@ func allCompletions() []completionEntry {
 		{"/stats", "show usage and cost stats"},
 		{"/help", "show all commands or commands for a group"},
 		{"/delete-last", "delete last N exchanges from history"},
+		{"/tts [on|off]", "toggle TTS auto-mode"},
 		{"/fold-all", "expand or collapse all long entries"},
 		{"/play-all", "play all entries via TTS (toggle)"},
 		{"/exit", "exit lore"},
@@ -929,6 +968,7 @@ func cmdHelp(cmd string, args []string) cmdResult {
 			{"// <text>", "save a personal note (not sent to LLM)"},
 		},
 		"view": {
+			{"/tts [on|off]", "auto-speak each response (toggle; no arg = toggle)"},
 			{"/fold-all", "expand or collapse all long entries (toggle)"},
 			{"/play-all", "play all entries via TTS — s or Ctrl+C to stop"},
 		},
