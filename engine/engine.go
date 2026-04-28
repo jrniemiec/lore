@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"sync"
 	"time"
@@ -262,9 +263,24 @@ func (e *Engine) LoadSummary() (string, int, error) {
 	return e.st.LoadSummary(e.topicName)
 }
 
+// ResourceDir returns the path to the active topic's resources/ directory.
+func (e *Engine) ResourceDir() string {
+	return core.TopicResourceDir(e.cfg.TopicsRoot, e.topicName)
+}
+
 // AddResource copies a file into the active topic's resources/ directory.
 func (e *Engine) AddResource(sourcePath string) error {
 	return e.st.CreateResource(e.topicName, sourcePath)
+}
+
+// ListResources returns file info for all resources in the active topic's resources/ directory.
+func (e *Engine) ListResources() ([]fs.FileInfo, error) {
+	return e.st.ListResources(e.topicName)
+}
+
+// RemoveResource deletes a resource file by name from the active topic's resources/ directory.
+func (e *Engine) RemoveResource(name string) error {
+	return e.st.DeleteResource(e.topicName, name)
 }
 
 // DeleteLast removes the last n exchanges (each being a user+assistant turn or a note)

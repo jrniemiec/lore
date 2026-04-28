@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -33,6 +34,8 @@ type exchange struct {
 	elapsed  time.Duration
 	complete bool // false while assistant reply is still streaming
 	isNote   bool // true for standalone note entries
+	isPasted bool // true when user message was a clipboard paste
+	expanded bool // true when pasted content is shown in full (in-memory only)
 }
 
 // Bubbletea message types.
@@ -42,6 +45,7 @@ type streamDoneMsg struct {
 	err    error
 }
 type spinnerTickMsg struct{}
+type ttsDoneMsg struct{ err error }
 
 // Model is the root Bubbletea application model.
 type Model struct {
@@ -96,6 +100,14 @@ type Model struct {
 	inputHistory []string // oldest first, max 128
 	historyIdx   int      // -1 = not browsing
 	historySaved string   // draft saved before browsing started
+
+	// paste mode (active when clipboard content exceeds threshold)
+	pastedBlob string // full text to send; empty = not in paste mode
+
+	// TTS playback
+	ttsCmd   *exec.Cmd // non-nil while TTS is playing
+	ttsExIdx int       // exchange being spoken (-1 = none)
+	ttsQueue []int     // pending exchange indices for play-all
 
 	// command completion (active when input starts with /)
 	completionItems []completionEntry // filtered list
@@ -152,6 +164,7 @@ func New(eng *engine.Engine, cfg config.Config, loreHome string) Model {
 		focus:         paneInput,
 		focusedExIdx:  -1,
 		historyIdx:    -1,
+		ttsExIdx:      -1,
 		cursorVisible: true,
 	}
 	m.loadUsageStats()
@@ -165,7 +178,7 @@ func (m Model) Init() tea.Cmd {
 }
 
 func spinnerTick() tea.Cmd {
-	return tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg {
+	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg {
 		return spinnerTickMsg{}
 	})
 }

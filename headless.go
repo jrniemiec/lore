@@ -75,6 +75,12 @@ func runHeadless(cfg config.Config, cfgPath string) int {
 	if flagTopicResource != "" {
 		return cmdAddResource(st, topicName, flagTopicResource)
 	}
+	if flagResourceList {
+		return cmdListResources(st, topicName)
+	}
+	if flagResourceRemove != "" {
+		return cmdRemoveResource(st, topicName, flagResourceRemove, flagForce)
+	}
 	if flagNote != "" {
 		return cmdAddNote(cfg, cfgPath, loreHome, topicName, flagNote)
 	}
@@ -103,6 +109,14 @@ func runChat(cfg config.Config, cfgPath, loreHome, topicName string) int {
 	if prompt == "" {
 		fmt.Fprintln(os.Stderr, "usage: lore [flags] <prompt>")
 		flag.PrintDefaults()
+		return 1
+	}
+
+	// Resolve @ref file injections before handing off to engine(s).
+	resourceDir := core.TopicResourceDir(cfg.TopicsRoot, topicName)
+	prompt, err = core.ResolveAtRefs(prompt, resourceDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
 	}
 
@@ -567,6 +581,50 @@ func cmdAddResource(st *store.FileStore, topicName, sourcePath string) int {
 	return 0
 }
 
+func cmdListResources(st *store.FileStore, topicName string) int {
+	files, err := st.ListResources(topicName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "list resources: %v\n", err)
+		return 1
+	}
+	if len(files) == 0 {
+		fmt.Fprintf(os.Stderr, "(no resources for topic %q)\n", topicName)
+		return 0
+	}
+	for _, fi := range files {
+		size := fi.Size()
+		var sizeStr string
+		switch {
+		case size >= 1024*1024:
+			sizeStr = fmt.Sprintf("%.1f MB", float64(size)/1024/1024)
+		case size >= 1024:
+			sizeStr = fmt.Sprintf("%.1f KB", float64(size)/1024)
+		default:
+			sizeStr = fmt.Sprintf("%d B", size)
+		}
+		fmt.Printf("%-32s  %8s  %s\n", fi.Name(), sizeStr, fi.ModTime().Format("2006-01-02 15:04:05"))
+	}
+	return 0
+}
+
+func cmdRemoveResource(st *store.FileStore, topicName, name string, force bool) int {
+	if !force {
+		fmt.Fprintf(os.Stderr, "remove resource %q from topic %q? [yes/N]: ", name, topicName)
+		var ans string
+		fmt.Fscan(os.Stdin, &ans)
+		if strings.ToLower(strings.TrimSpace(ans)) != "yes" {
+			fmt.Fprintln(os.Stderr, "cancelled")
+			return 0
+		}
+	}
+	if err := st.DeleteResource(topicName, name); err != nil {
+		fmt.Fprintf(os.Stderr, "remove resource: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "resource %q removed from topic %q\n", name, topicName)
+	return 0
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -648,9 +706,11 @@ func cmdHelpNoun(noun string) int {
 			{"--topic-delete [--force]", "delete current topic and all its files"},
 			{"--topic-clear [--force]", "erase history for current topic"},
 			{"--topic-default-set <name>", "persist default topic to config"},
-			{"--topic-resource <file>", "add resource file to current topic"},
-			{"--note <text>", "save a personal note to topic history (not sent to LLM)"},
-			{"--delete-last [n]", "delete last N exchanges from topic history (default 1)"},
+		},
+		"resource": {
+			{"--resource-list", "list resources for current topic"},
+			{"--resource-add <file> / -u", "copy file into topic resources"},
+			{"--resource-remove <name> [--force]", "delete a named resource from topic"},
 		},
 		"profile": {
 			{"--profile-list", "list all configured profiles"},
@@ -668,21 +728,53 @@ func cmdHelpNoun(noun string) int {
 			{"--skip-history / -X", "do not persist this exchange to history"},
 			{"--no-stream / -N", "disable streaming; print full response at once"},
 			{"--all-profiles / -A", "run prompt against all configured profiles"},
+			{"--note <text>", "save a personal note to topic history (not sent to LLM)"},
+			{"--delete-last [n]", "delete last N exchanges from topic history (default 1)"},
 		},
 		"info": {
 			{"--config", "print resolved configuration"},
 			{"--status", "show effective defaults for next invocation"},
 			{"--stats", "print cumulative usage and cost stats"},
 			{"--debug / -D", "print request/response debug info to stderr"},
-			{"--help-for <noun>", "show help for a command group: topic|profile|system|session|info|all"},
+			{"--help-for <noun>", "show help for a command group"},
 		},
 	}
-	order := []string{"topic", "profile", "system", "session", "info"}
+	filesLines := []string{
+		"files:",
+		"  Embed one or more @ref tokens in any prompt to inject file content.",
+		"  The surrounding text becomes the instruction; each file becomes a block.",
+		"  All refs must resolve or the request is aborted.",
+		"",
+		"  @name               topic resources folder  (resources/name)",
+		"  @subdir/name        topic resources folder  (resources/subdir/name)",
+		"  @./path  @../path   relative filesystem path (from current directory)",
+		"  @/absolute/path     absolute filesystem path",
+		"  @~/path             home-relative filesystem path",
+		"",
+		"  Examples:",
+		"    lore 'explain this' @main.go",
+		"    lore 'compare @old.py and @new.py and list the differences'",
+		"    lore 'summarize @notes.txt and cross-check with @~/docs/spec.md'",
+		"",
+	}
+	order := []string{"topic", "resource", "profile", "system", "session", "info", "files"}
 
 	noun = strings.ToLower(strings.TrimSpace(noun))
 	if noun == "all" || noun == "" {
 		for _, n := range order {
-			printHelpGroup(n, groups[n])
+			if n == "files" {
+				for _, l := range filesLines {
+					fmt.Println(l)
+				}
+			} else {
+				printHelpGroup(n, groups[n])
+			}
+		}
+		return 0
+	}
+	if noun == "files" {
+		for _, l := range filesLines {
+			fmt.Println(l)
 		}
 		return 0
 	}

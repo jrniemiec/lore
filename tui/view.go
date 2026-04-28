@@ -89,6 +89,41 @@ func fgBold(col lipgloss.Color, text string) string {
 	return fmt.Sprintf("\033[1;38;2;%d;%d;%dm%s\033[0m", r, g, b, text)
 }
 
+// lerpColor interpolates between c1 (t=0) and c2 (t=1).
+func lerpColor(c1, c2 lipgloss.Color, t float64) lipgloss.Color {
+	r1, g1, b1, ok1 := hexToRGB(string(c1))
+	r2, g2, b2, ok2 := hexToRGB(string(c2))
+	if !ok1 || !ok2 {
+		return c2
+	}
+	lerp := func(a, b int64) int64 { return a + int64(t*float64(b-a)) }
+	return lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", lerp(r1, r2), lerp(g1, g2), lerp(b1, b2)))
+}
+
+// waveDots renders N dots with a brightness wave: the peak travels left-to-right.
+// peak = which dot index is brightest (0-based), wraps around.
+func waveDots(n, peak int, bright, dim lipgloss.Color) string {
+	var sb strings.Builder
+	for i := 0; i < n; i++ {
+		// Distance from peak, wrapping around.
+		dist := i - peak
+		if dist < 0 {
+			dist = -dist
+		}
+		if wrap := n - dist; wrap < dist {
+			dist = wrap
+		}
+		// t=1 at peak, falls off toward 0 at max distance.
+		t := 1.0 - float64(dist)/float64((n+1)/2+1)
+		if t < 0 {
+			t = 0
+		}
+		col := lerpColor(dim, bright, t)
+		sb.WriteString(fg(col, "●"))
+	}
+	return sb.String()
+}
+
 func fgFaint(col lipgloss.Color, text string) string {
 	r, g, b, ok := hexToRGB(string(col))
 	if !ok {
@@ -241,13 +276,25 @@ func renderConversation(m *Model) (string, []int) {
 
 		var turnContent string
 		if ex.isNote {
-			noteRaw := wordWrap(compactLines(ex.userMsg.Content), wrapWidth)
+			noteText := ex.userMsg.Content
+			noteLines := strings.Split(noteText, "\n")
+			if (len(noteLines) > 5 || len(noteText) > 512) && !ex.expanded {
+				noteText = strings.Join(noteLines[:5], "\n")
+				noteText += "\n" + fg("#6B7A8D", fmt.Sprintf("... (%d more lines)", len(noteLines)-5))
+			}
+			noteRaw := wordWrap(compactLines(noteText), wrapWidth)
 			noteColor := lipgloss.Color("#6B7A8D") // muted blue-grey
 			turnContent = addPrefix(fgLines(noteColor, noteRaw),
 				fg(noteColor, "📌 "),
 				"  ")
 		} else {
-			userRaw := wordWrap(compactLines(ex.userMsg.Content), wrapWidth)
+			userText := ex.userMsg.Content
+			userLines := strings.Split(userText, "\n")
+			if (len(userLines) > 5 || len(userText) > 512) && !ex.expanded {
+				userText = strings.Join(userLines[:5], "\n")
+				userText += "\n" + fg("#6B7A8D", fmt.Sprintf("... (%d more lines)", len(userLines)-5))
+			}
+			userRaw := wordWrap(compactLines(userText), wrapWidth)
 			userContent := addPrefix(fgLines(t.UserText, userRaw),
 				fg(t.AssistantText, "● "),
 				"  ")
@@ -262,8 +309,19 @@ func renderConversation(m *Model) (string, []int) {
 			turnContent = userContent + "\n" + asstContent
 		}
 
-		if focused || deleting {
+		speaking := m.ttsExIdx == i
+		if focused || deleting || speaking {
 			header := fg(t.Dimmed, ex.userMsg.Time.Format("15:04"))
+			if speaking {
+				header += fgBold(t.StreamingText, "  ♪")
+			}
+			if (strings.Count(ex.userMsg.Content, "\n") >= 5 || len(ex.userMsg.Content) > 512) && !deleting {
+				if ex.expanded {
+					header += fg(t.Dimmed, "  · e to collapse")
+				} else {
+					header += fg(t.Dimmed, "  · e to expand")
+				}
+			}
 			if deleting {
 				turnContent = boxStyleRed.Render(header + "\n" + turnContent)
 			} else {
@@ -291,12 +349,44 @@ func renderConversation(m *Model) (string, []int) {
 	return strings.Join(parts, "\n\n"), offsets
 }
 
+const waveDotCount = 5
+
 func renderSpinner(m *Model) string {
 	t := ActiveTheme
 	if m.spinnerFrame%2 == 0 {
 		return fgBold(t.Spinner, "❄")
 	}
 	return fgFaint(t.Spinner, "❄")
+}
+
+func renderWaveIndicator(frame int, label string, bright, dim lipgloss.Color) string {
+	// Build the full rune slice: "❄ <label> ●●●●●"
+	full := "❄ " + label + " "
+	runes := []rune(full)
+	dots := []rune("●●●●●")
+	all := append(runes, dots...)
+	n := len(all)
+
+	// Wave peak advances every tick (~100ms), travels across full string.
+	peak := frame % n
+
+	var sb strings.Builder
+	for i, r := range all {
+		dist := i - peak
+		if dist < 0 {
+			dist = -dist
+		}
+		if wrap := n - dist; wrap < dist {
+			dist = wrap
+		}
+		t := 1.0 - float64(dist)/float64(n/2+1)
+		if t < 0 {
+			t = 0
+		}
+		col := lerpColor(dim, bright, t)
+		sb.WriteString(fg(col, string(r)))
+	}
+	return sb.String()
 }
 
 // =============================================================================
@@ -511,15 +601,12 @@ func renderStatsLine(m *Model, sep string) string {
 	t := ActiveTheme
 	const pad = 1
 
-	// Left: spinner + "streaming" while in flight, empty otherwise.
-	// Both rendered in purple (StreamingText).
+	// Left: spinner + "streaming" while in flight, or TTS indicator.
 	var left string
-	if m.streaming {
-		if m.spinnerFrame%2 == 0 {
-			left = fgBold(t.StreamingText, "❄") + " " + fgBold(t.StreamingText, "streaming ...")
-		} else {
-			left = fgFaint(t.StreamingText, "❄") + " " + fgFaint(t.StreamingText, "streaming ...")
-		}
+	if m.ttsCmd != nil {
+		left = renderWaveIndicator(m.spinnerFrame, fmt.Sprintf("♪ speaking #%d", m.ttsExIdx+1), t.StreamingText, t.Dimmed)
+	} else if m.streaming {
+		left = renderWaveIndicator(m.spinnerFrame, "streaming", t.StreamingText, t.Dimmed)
 	}
 
 	// Center: per-request stats — shown permanently after first response.

@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -31,8 +33,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// --- spinner tick ---
 	case spinnerTickMsg:
 		m.spinnerFrame++
-		m.cursorVisible = !m.cursorVisible
-		if m.streaming {
+		// Cursor blinks at ~400ms (every 4 ticks of 100ms).
+		if m.spinnerFrame%4 == 0 {
+			m.cursorVisible = !m.cursorVisible
+		}
+		if m.streaming || m.ttsCmd != nil {
 			m.rebuildConvContent()
 		}
 		cmds = append(cmds, spinnerTick())
@@ -82,6 +87,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rebuildConvContent()
 		m.input.Focus()
 
+	// --- TTS done ---
+	case ttsDoneMsg:
+		m.ttsCmd = nil
+		m.ttsExIdx = -1
+		// Drain queue if play-all is active.
+		if len(m.ttsQueue) > 0 {
+			next := m.ttsQueue[0]
+			m.ttsQueue = m.ttsQueue[1:]
+			if next < len(m.exchanges) {
+				text := ttsText(&m.exchanges[next])
+				cmds = append(cmds, startTTS(text, next, &m))
+			}
+		}
+		m.rebuildConvContent()
+
 	// --- mouse ---
 	case tea.MouseMsg:
 		// Scroll wheel only — clicks are ignored so the terminal can handle
@@ -99,10 +119,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// --- keyboard ---
 	case tea.KeyMsg:
+		// Bracketed paste: entire pasted content arrives as one KeyMsg with Paste=true.
+		if msg.Paste && m.focus == paneInput && !m.streaming && m.pendingAction == nil {
+			// Normalize \r\n and bare \r to \n (terminals paste with \r endings).
+			content := strings.ReplaceAll(string(msg.Runes), "\r\n", "\n")
+			content = strings.ReplaceAll(content, "\r", "\n")
+			lines := strings.Split(content, "\n")
+			if len(lines) > 10 || len([]rune(content)) > 256 {
+				pre := m.input.Value()
+				blob := pre
+				if blob != "" && !strings.HasSuffix(blob, "\n") {
+					blob += "\n"
+				}
+				blob += content
+				m.pastedBlob = blob
+				lineCount := strings.Count(content, "\n") + 1
+				kb := float64(len(content)) / 1024.0
+				label := fmt.Sprintf("[pasted: %d lines · %.1f KB]", lineCount, kb)
+				// Keep pre-text visible; append label so user can see what was typed.
+				m.input.SetValue(pre + label)
+				m.input.CursorEnd()
+				m.completionItems = nil
+				m.completionIdx = -1
+				m.syncLayout()
+			} else {
+				m.input.InsertString(content)
+			}
+			break
+		}
+
 		switch {
 
-		// Ctrl+C: cancel stream or quit
+		// Ctrl+C: stop TTS, cancel stream, or quit
 		case key.Matches(msg, keys.Cancel):
+			if m.ttsCmd != nil {
+				_ = m.ttsCmd.Process.Kill()
+				m.ttsCmd = nil
+				m.ttsExIdx = -1
+				m.ttsQueue = nil
+				m.rebuildConvContent()
+				return m, nil
+			}
 			if m.streaming && m.cancelStream != nil {
 				m.cancelStream()
 				return m, nil
@@ -142,6 +199,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.focus == paneInput && m.input.Value() != "" {
 				m.input.Reset()
 				m.input.SetHeight(1)
+				m.pastedBlob = ""
 				m.completionItems = nil
 				m.completionIdx = -1
 				m.historyIdx = -1
@@ -177,6 +235,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.pendingPost(&m)
 						m.pendingPost = nil
 					}
+					m.focusedExIdx = -1
 					m.lastCmd = &result
 					m.rebuildConvContent()
 					m.cmdScroll.SetContent(renderCmdOutput(&m))
@@ -205,7 +264,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.scrollToBottom()
 				} else if strings.HasPrefix(val, "//") {
 					// Personal note — save to history, never sent to LLM.
-					text := strings.TrimSpace(val[2:])
+					// If a paste blob is pending, strip the // prefix from the blob
+					// (blob already contains the pre-text including "// ...").
+					var text string
+					if m.pastedBlob != "" {
+						// blob starts with the pre-text, e.g. "// intro\npasted content..."
+						raw := m.pastedBlob
+						m.pastedBlob = ""
+						if strings.HasPrefix(raw, "//") {
+							raw = strings.TrimSpace(raw[2:])
+						}
+						text = raw
+					} else {
+						text = strings.TrimSpace(val[2:])
+					}
 					m.pushHistory(val)
 					m.input.Reset()
 					if text != "" {
@@ -241,6 +313,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.syncLayout()
 						m.cmdScroll.SetContent(renderCmdOutput(&m))
 						m.cmdScroll.GotoTop()
+						// If /play-all queued entries, kick off playback now.
+						if m.ttsCmd == nil && len(m.ttsQueue) > 0 {
+							next := m.ttsQueue[0]
+							m.ttsQueue = m.ttsQueue[1:]
+							if next < len(m.exchanges) {
+								cmds = append(cmds, startTTS(ttsText(&m.exchanges[next]), next, &m))
+							}
+						}
 					} else {
 						cmds = append(cmds, m.sendMessage())
 					}
@@ -372,41 +452,66 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// TODO: profile picker popup
 
 		default:
-			// d: delete focused entry when in nav mode.
-			if m.focus == paneConv && m.focusedExIdx >= 0 && m.pendingAction == nil &&
-				msg.Type == tea.KeyRunes && string(msg.Runes) == "d" {
-				exIdx := m.focusedExIdx
-				eng := m.eng
-				m.pendingAction = func() cmdResult {
-					if err := eng.DeleteAt(exIdx); err != nil {
-						return cmdResult{input: fmt.Sprintf("delete entry #%d", exIdx+1), output: []string{err.Error()}, isError: true}
+			// e/d/s: nav mode actions — only when paneConv is focused.
+			if m.focus == paneConv && m.focusedExIdx >= 0 && msg.Type == tea.KeyRunes {
+				switch string(msg.Runes) {
+				case "s":
+					if m.ttsCmd != nil {
+						// Already playing — stop it and clear queue.
+						_ = m.ttsCmd.Process.Kill()
+						m.ttsCmd = nil
+						m.ttsExIdx = -1
+						m.ttsQueue = nil
+						m.rebuildConvContent()
+					} else {
+						exIdx := m.focusedExIdx
+						text := ttsText(&m.exchanges[exIdx])
+						cmds = append(cmds, startTTS(text, exIdx, &m))
 					}
-					return cmdResult{input: fmt.Sprintf("delete entry #%d", exIdx+1), output: []string{"deleted"}}
-				}
-				m.pendingPost = func(model *Model) {
-					model.exchanges = append(model.exchanges[:exIdx], model.exchanges[exIdx+1:]...)
-					if model.focusedExIdx >= len(model.exchanges) {
-						model.focusedExIdx = len(model.exchanges) - 1
+					return m, tea.Batch(cmds...)
+				case "e":
+					ex := &m.exchanges[m.focusedExIdx]
+					if strings.Count(ex.userMsg.Content, "\n") >= 5 || len(ex.userMsg.Content) > 512 {
+						ex.expanded = !ex.expanded
+						m.rebuildConvContent()
 					}
-					if len(model.exchanges) == 0 {
-						model.focus = paneInput
-						model.focusedExIdx = -1
-						model.input.Focus()
+					return m, tea.Batch(cmds...)
+				case "d":
+					if m.pendingAction == nil {
+						exIdx := m.focusedExIdx
+						eng := m.eng
+						m.pendingAction = func() cmdResult {
+							if err := eng.DeleteAt(exIdx); err != nil {
+								return cmdResult{input: fmt.Sprintf("delete entry #%d", exIdx+1), output: []string{err.Error()}, isError: true}
+							}
+							return cmdResult{input: fmt.Sprintf("delete entry #%d", exIdx+1), output: []string{"deleted"}}
+						}
+						m.pendingPost = func(model *Model) {
+							model.exchanges = append(model.exchanges[:exIdx], model.exchanges[exIdx+1:]...)
+							if model.focusedExIdx >= len(model.exchanges) {
+								model.focusedExIdx = len(model.exchanges) - 1
+							}
+							if len(model.exchanges) == 0 {
+								model.focus = paneInput
+								model.focusedExIdx = -1
+								model.input.Focus()
+							}
+						}
+						m.lastCmd = &cmdResult{
+							input:    fmt.Sprintf("delete entry #%d", exIdx+1),
+							warnLine: fmt.Sprintf("Deleting entry #%d ...", exIdx+1),
+							output:   []string{"[yes] to confirm, other or Esc to cancel:"},
+						}
+						m.cmdPaneOpen = true
+						m.focus = paneCmd
+						m.input.Blur()
+						m.rebuildConvContent()
+						m.syncLayout()
+						m.cmdScroll.SetContent(renderCmdOutput(&m))
+						m.cmdScroll.GotoTop()
 					}
+					return m, tea.Batch(cmds...)
 				}
-				m.lastCmd = &cmdResult{
-					input:    fmt.Sprintf("delete entry #%d", exIdx+1),
-					warnLine: fmt.Sprintf("Deleting entry #%d ...", exIdx+1),
-					output:   []string{"[yes] to confirm, other or Esc to cancel:"},
-				}
-				m.cmdPaneOpen = true
-				m.focus = paneCmd
-				m.input.Blur()
-				m.rebuildConvContent()
-				m.syncLayout()
-				m.cmdScroll.SetContent(renderCmdOutput(&m))
-				m.cmdScroll.GotoTop()
-				break
 			}
 			// Any edit while browsing history exits history mode, keeping current entry.
 			if m.focus == paneInput && m.historyIdx != -1 {
@@ -462,10 +567,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // sendMessage takes the current input, sends it to the engine, and returns a Cmd.
 func (m *Model) sendMessage() tea.Cmd {
-	prompt := strings.TrimSpace(m.input.Value())
-	if prompt == "" {
+	var rawPrompt string
+	isPasted := m.pastedBlob != ""
+	if isPasted {
+		rawPrompt = m.pastedBlob
+		m.pastedBlob = ""
+	} else {
+		rawPrompt = strings.TrimSpace(m.input.Value())
+	}
+	if rawPrompt == "" {
 		return nil
 	}
+
+	// Resolve @ref file injections. Abort on error, show in cmd pane.
+	prompt, err := core.ResolveAtRefs(rawPrompt, m.eng.ResourceDir())
+	if err != nil {
+		m.pastedBlob = "" // clear any pending blob
+		errRes := cmdResult{input: rawPrompt, output: []string{err.Error()}, isError: true}
+		m.lastCmd = &errRes
+		m.cmdPaneOpen = true
+		m.focus = paneInput
+		m.input.Focus()
+		m.syncLayout()
+		m.cmdScroll.SetContent(renderCmdOutput(m))
+		m.cmdScroll.GotoTop()
+		return nil
+	}
+
 	m.input.Reset()
 	m.input.SetHeight(1)
 	m.input.Blur()
@@ -476,6 +604,7 @@ func (m *Model) sendMessage() tea.Cmd {
 			Content: prompt,
 		},
 		complete: false,
+		isPasted: isPasted,
 	})
 	m.streaming = true
 	m.streamBuf = ""
@@ -502,6 +631,33 @@ func (m *Model) sendMessage() tea.Cmd {
 			return nil
 		})
 		return streamDoneMsg{result: result, err: err}
+	}
+}
+
+// ttsText builds the plain text to speak for an exchange.
+func ttsText(ex *exchange) string {
+	if ex.isNote {
+		return ex.userMsg.Content
+	}
+	parts := []string{ex.userMsg.Content}
+	if ex.asstMsg.Content != "" {
+		parts = append(parts, ex.asstMsg.Content)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// startTTS launches tts-play with the given text via stdin and returns a Cmd
+// that sends ttsDoneMsg when the process exits.
+func startTTS(text string, exIdx int, m *Model) tea.Cmd {
+	ttsPath := os.ExpandEnv("$HOME/dev/bin/tts-play")
+	cmd := exec.Command(ttsPath, "-s", "1.4", "-v", "1.2")
+	cmd.Stdin = strings.NewReader(text)
+	m.ttsCmd = cmd
+	m.ttsExIdx = exIdx
+	m.rebuildConvContent()
+	return func() tea.Msg {
+		err := cmd.Run()
+		return ttsDoneMsg{err: err}
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.vom/jrniemiec/lore/config"
 	"github.vom/jrniemiec/lore/core"
@@ -13,11 +14,12 @@ import (
 
 // knownCommands is the set of command names (without leading /) for bare-word recognition.
 var knownCommands = map[string]bool{
-	"exit": true, "help": true, "delete-last": true,
+	"exit": true, "help": true, "delete-last": true, "fold-all": true, "play-all": true,
 	"topic": true, "topic-switch": true, "topic-new": true, "topic-list": true,
 	"topic-delete": true, "topic-clear": true, "topic-default": true,
 	"topic-default-set": true, "topic-summary": true, "topic-history": true,
 	"topic-resource": true,
+	"resource-list": true, "resource-add": true, "resource-remove": true,
 	"profile": true, "profile-switch": true, "profile-list": true,
 	"profile-default": true, "profile-default-set": true,
 	"system": true, "system-set": true, "system-clear": true,
@@ -66,8 +68,12 @@ func handleCommand(m *Model, input string) cmdResult {
 		return cmdTopicSummary(m)
 	case "/topic-history":
 		return cmdTopicHistory(m, args)
-	case "/topic-resource":
-		return cmdTopicResource(m, args)
+	case "/topic-resource", "/resource-add":
+		return cmdResourceAdd(m, args)
+	case "/resource-list":
+		return cmdResourceList(m, args)
+	case "/resource-remove":
+		return cmdResourceRemove(m, args)
 
 	// --- profile ---
 	case "/profile":
@@ -88,6 +94,12 @@ func handleCommand(m *Model, input string) cmdResult {
 		return cmdSystemSet(m, args)
 	case "/system-clear":
 		return cmdSystemClear(m)
+
+	// --- view ---
+	case "/fold-all":
+		return cmdFoldAll(m)
+	case "/play-all":
+		return cmdPlayAll(m)
 
 	// --- info ---
 	case "/config":
@@ -324,15 +336,64 @@ func cmdTopicHistory(m *Model, args []string) cmdResult {
 	return okResult("/topic-history", lines)
 }
 
-func cmdTopicResource(m *Model, args []string) cmdResult {
+func cmdResourceAdd(m *Model, args []string) cmdResult {
 	if len(args) == 0 {
-		return errResult("/topic-resource", "usage: /topic-resource <file>")
+		return errResult("/resource-add", "usage: /resource-add <file>")
 	}
 	path := args[0]
 	if err := m.eng.AddResource(path); err != nil {
-		return errResult("/topic-resource "+path, err.Error())
+		return errResult("/resource-add "+path, err.Error())
 	}
-	return okResult("/topic-resource "+path, []string{fmt.Sprintf("resource %q added", path)})
+	return okResult("/resource-add "+path, []string{fmt.Sprintf("resource %q added to topic %q", path, m.eng.TopicName())})
+}
+
+func cmdResourceList(m *Model, args []string) cmdResult {
+	topicName := m.eng.TopicName()
+	if len(args) > 0 {
+		topicName = args[0]
+	}
+	st := store.New(m.cfg.TopicsRoot)
+	files, err := st.ListResources(topicName)
+	if err != nil {
+		return errResult("/resource-list", err.Error())
+	}
+	if len(files) == 0 {
+		return okResult("/resource-list", []string{fmt.Sprintf("(no resources for topic %q)", topicName)})
+	}
+	lines := []string{fmt.Sprintf("resources for topic %q:", topicName)}
+	for _, fi := range files {
+		size := fi.Size()
+		var sizeStr string
+		switch {
+		case size >= 1024*1024:
+			sizeStr = fmt.Sprintf("%.1f MB", float64(size)/1024/1024)
+		case size >= 1024:
+			sizeStr = fmt.Sprintf("%.1f KB", float64(size)/1024)
+		default:
+			sizeStr = fmt.Sprintf("%d B", size)
+		}
+		lines = append(lines, fmt.Sprintf("  %-32s  %8s  %s", fi.Name(), sizeStr, fi.ModTime().Format(time.DateTime)))
+	}
+	return okResult("/resource-list", lines)
+}
+
+func cmdResourceRemove(m *Model, args []string) cmdResult {
+	if len(args) == 0 {
+		return errResult("/resource-remove", "usage: /resource-remove <name>")
+	}
+	name := args[0]
+	topicName := m.eng.TopicName()
+	label := "/resource-remove " + name
+	m.pendingAction = func() cmdResult {
+		if err := m.eng.RemoveResource(name); err != nil {
+			return errResult(label, err.Error())
+		}
+		return okResult(label, []string{fmt.Sprintf("resource %q removed from topic %q", name, topicName)})
+	}
+	return okResult(label, []string{
+		fmt.Sprintf("Resource %q will be permanently deleted from topic %q.", name, topicName),
+		"[yes] to confirm, other input or Esc to cancel:",
+	})
 }
 
 // =============================================================================
@@ -703,6 +764,64 @@ func cmdDeleteLast(m *Model, args []string) cmdResult {
 	})
 }
 
+func cmdFoldAll(m *Model) cmdResult {
+	// Count entries that are long enough to fold.
+	isFoldable := func(content string) bool {
+		return strings.Count(content, "\n") >= 5 || len(content) > 512
+	}
+	longCount := 0
+	for _, ex := range m.exchanges {
+		if isFoldable(ex.userMsg.Content) {
+			longCount++
+		}
+	}
+	if longCount == 0 {
+		return okResult("/fold-all", []string{"no long entries to fold"})
+	}
+	// If all long entries are expanded → collapse; otherwise expand all.
+	allExpanded := true
+	for _, ex := range m.exchanges {
+		if isFoldable(ex.userMsg.Content) && !ex.expanded {
+			allExpanded = false
+			break
+		}
+	}
+	target := !allExpanded
+	for i := range m.exchanges {
+		if isFoldable(m.exchanges[i].userMsg.Content) {
+			m.exchanges[i].expanded = target
+		}
+	}
+	m.rebuildConvContent()
+	verb := "collapsed"
+	if target {
+		verb = "expanded"
+	}
+	return okResult("/fold-all", []string{fmt.Sprintf("%s %d long entr%s", verb, longCount, map[bool]string{true: "y", false: "ies"}[longCount == 1])})
+}
+
+func cmdPlayAll(m *Model) cmdResult {
+	if m.ttsCmd != nil {
+		// Already playing — stop everything.
+		_ = m.ttsCmd.Process.Kill()
+		m.ttsCmd = nil
+		m.ttsExIdx = -1
+		m.ttsQueue = nil
+		m.rebuildConvContent()
+		return okResult("/play-all", []string{"playback stopped"})
+	}
+	if len(m.exchanges) == 0 {
+		return okResult("/play-all", []string{"no entries to play"})
+	}
+	// Queue all indices — Update will drain them after the command pane is shown.
+	queue := make([]int, len(m.exchanges))
+	for i := range m.exchanges {
+		queue[i] = i
+	}
+	m.ttsQueue = queue
+	return okResult("/play-all", []string{fmt.Sprintf("playing %d entries — s or Ctrl+C to stop", len(m.exchanges))})
+}
+
 // =============================================================================
 // completion
 // =============================================================================
@@ -726,7 +845,9 @@ func allCompletions() []completionEntry {
 		{"/topic-default-set", "set default topic"},
 		{"/topic-summary", "show current context summary"},
 		{"/topic-history", "show last N exchanges"},
-		{"/topic-resource", "add resource file to topic"},
+		{"/resource-add", "add resource file to current topic"},
+		{"/resource-list", "list resources for topic"},
+		{"/resource-remove", "remove a resource from topic"},
 		{"/profile", "show profile info"},
 		{"/profile-switch", "switch to named profile"},
 		{"/profile-list", "list all profiles"},
@@ -740,6 +861,8 @@ func allCompletions() []completionEntry {
 		{"/stats", "show usage and cost stats"},
 		{"/help", "show all commands or commands for a group"},
 		{"/delete-last", "delete last N exchanges from history"},
+		{"/fold-all", "expand or collapse all long entries"},
+		{"/play-all", "play all entries via TTS (toggle)"},
 		{"/exit", "exit lore"},
 	}
 }
@@ -776,7 +899,11 @@ func cmdHelp(cmd string, args []string) cmdResult {
 			{"/topic-default-set <name>", "set default topic"},
 			{"/topic-summary", "show current context summary"},
 			{"/topic-history [n]", "show last N exchanges"},
-			{"/topic-resource <file>", "add resource file to topic"},
+		},
+		"resource": {
+			{"/resource-list [topic]", "list resources for topic"},
+			{"/resource-add <file>", "copy file into topic resources"},
+			{"/resource-remove <name>", "delete a resource from topic"},
 		},
 		"profile": {
 			{"/profile", "show current profile"},
@@ -801,27 +928,60 @@ func cmdHelp(cmd string, args []string) cmdResult {
 		"notes": {
 			{"// <text>", "save a personal note (not sent to LLM)"},
 		},
+		"view": {
+			{"/fold-all", "expand or collapse all long entries (toggle)"},
+			{"/play-all", "play all entries via TTS — s or Ctrl+C to stop"},
+		},
 	}
-	order := []string{"topic", "profile", "system", "info", "notes"}
+
+	filesSection := []string{
+		"files:",
+		"  Append one or more @ref tokens to any prompt to inject file content.",
+		"  The surrounding text becomes the instruction; each file becomes a block.",
+		"  Multiple refs are resolved left-to-right; all must exist or the send aborts.",
+		"",
+		"  @name               topic resources folder  (resources/name)",
+		"  @subdir/name        topic resources folder  (resources/subdir/name)",
+		"  @./path  @../path   relative filesystem path (from current directory)",
+		"  @/absolute/path     absolute filesystem path",
+		"  @~/path             home-relative filesystem path",
+		"",
+		"  Examples:",
+		"    explain this @main.go",
+		"    compare @old.py and @new.py and list the differences",
+		"    what does this do @./scripts/run.sh",
+		"    summarize @notes.txt and cross-check with @~/docs/spec.md",
+	}
+
+	order := []string{"topic", "resource", "profile", "system", "info", "notes", "files"}
 
 	noun := ""
 	if len(args) > 0 {
 		noun = strings.ToLower(args[0])
 	}
 
+	renderGroup := func(g string) []string {
+		if g == "files" {
+			return filesSection
+		}
+		entries := groups[g]
+		out := []string{g + ":"}
+		for _, e := range entries {
+			out = append(out, fmt.Sprintf("  %-32s  %s", e.cmd, e.desc))
+		}
+		return out
+	}
+
 	var lines []string
 	if noun == "" || noun == "all" {
 		for _, g := range order {
-			lines = append(lines, g+":")
-			for _, e := range groups[g] {
-				lines = append(lines, fmt.Sprintf("  %-32s  %s", e.cmd, e.desc))
+			if len(lines) > 0 {
+				lines = append(lines, "")
 			}
+			lines = append(lines, renderGroup(g)...)
 		}
-	} else if entries, ok := groups[noun]; ok {
-		lines = append(lines, noun+":")
-		for _, e := range entries {
-			lines = append(lines, fmt.Sprintf("  %-32s  %s", e.cmd, e.desc))
-		}
+	} else if noun == "files" || groups[noun] != nil {
+		lines = renderGroup(noun)
 	} else {
 		return errResult(cmd+" "+noun, fmt.Sprintf("unknown group %q — available: %s", noun, strings.Join(order, "|")))
 	}

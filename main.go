@@ -58,6 +58,8 @@ var (
 	flagProfileDefaultSet string
 	flagTopicDefaultSet   string
 	flagTopicResource     string
+	flagResourceList      bool
+	flagResourceRemove    string
 	flagNote              string
 	flagDeleteLast        int
 )
@@ -97,7 +99,7 @@ func init() {
 
 	// display / help
 	flag.IntVar(&flagSize, "size", 20, "exchanges/lines to show for topic-history/topic-summary")
-	flag.StringVar(&flagHelpNoun, "help-for", "", "show help for a command group: topic|profile|system|session|info|all")
+	flag.StringVar(&flagHelpNoun, "help-for", "", "show help for a command group: topic|resource|profile|system|session|info|files|all")
 	flag.BoolVar(&flagHelp, "h", false, "show help (alias for --help-for all)")
 
 	// admin — read/display
@@ -125,6 +127,8 @@ func init() {
 	flag.StringVar(&flagTopicDefaultSet, "topic-default-set", "", "persist default topic to config")
 	flag.StringVar(&flagTopicResource, "topic-resource", "", "copy file into topic resources/")
 	flag.StringVar(&flagTopicResource, "u", "", "copy file into topic resources/")
+	flag.BoolVar(&flagResourceList, "resource-list", false, "list resources for topic")
+	flag.StringVar(&flagResourceRemove, "resource-remove", "", "delete a named resource from topic")
 	flag.StringVar(&flagNote, "note", "", "save a personal note to topic history (not sent to LLM)")
 	flag.IntVar(&flagDeleteLast, "delete-last", -1, "delete last N exchanges (default 1) from topic history")
 }
@@ -181,7 +185,8 @@ func isHeadless() bool {
 		flagSystem || flagConfig || flagProfileList || flagStats ||
 		flagStatus || flagTopicNew != "" || flagTopicDelete || flagTopicClear ||
 		flagSystemSet != "" || flagSystemFile != "" || flagProfileDefaultSet != "" ||
-		flagTopicDefaultSet != "" || flagTopicResource != "" || flagNote != "" ||
+		flagTopicDefaultSet != "" || flagTopicResource != "" || flagResourceList ||
+		flagResourceRemove != "" || flagNote != "" ||
 		flagDeleteLast >= 0 || flagAllProfiles || flagHelpNoun != "" || flagHelp {
 		return true
 	}

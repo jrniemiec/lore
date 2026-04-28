@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -298,6 +299,53 @@ func parseSummaryFile(data string) (text string, coversThrough int, err error) {
 		return "", 0, fmt.Errorf("summary file: bad covers_through value: %w", err)
 	}
 	return body, n, nil
+}
+
+// ListResources returns file info for all files in the topic's resources/ directory.
+func (s *FileStore) ListResources(topicName string) ([]fs.FileInfo, error) {
+	dir, err := s.topicDir(topicName)
+	if err != nil {
+		return nil, err
+	}
+	resDir := filepath.Join(dir, "resources")
+	entries, err := os.ReadDir(resDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []fs.FileInfo{}, nil
+		}
+		return nil, err
+	}
+	var result []fs.FileInfo
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		result = append(result, info)
+	}
+	return result, nil
+}
+
+// DeleteResource removes a resource file by name from the topic's resources/ directory.
+func (s *FileStore) DeleteResource(topicName, name string) error {
+	if name == "" || strings.ContainsAny(name, "/\\") {
+		return fmt.Errorf("invalid resource name: %q", name)
+	}
+	dir, err := s.topicDir(topicName)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "resources", filepath.Base(name))
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("resource not found: %s", name)
+		}
+		return err
+	}
+	return os.Remove(path)
 }
 
 // CreateResource copies a file into the topic's resources/ directory.

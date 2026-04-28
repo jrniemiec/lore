@@ -1,5 +1,7 @@
 package core
 
+import "io/fs"
+
 // Topic holds a loaded topic's data.
 type Topic struct {
 	Name         string
@@ -30,4 +32,8 @@ type Store interface {
 
 	// CreateResource copies a file into the topic's resources/ directory.
 	CreateResource(topicName, sourcePath string) error
+	// ListResources returns file info for all resources in the topic's resources/ directory.
+	ListResources(topicName string) ([]fs.FileInfo, error)
+	// DeleteResource removes a resource file by name from the topic's resources/ directory.
+	DeleteResource(topicName, name string) error
 }
