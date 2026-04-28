@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.vom/jrniemiec/lore/config"
-	"github.vom/jrniemiec/lore/engine"
+	"github.com/jrniemiec/lore/config"
+	"github.com/jrniemiec/lore/engine"
 )
 
 // programSend is set by Start() so streaming goroutines can send delta msgs
@@ -15,7 +15,7 @@ import (
 var programSend func(tea.Msg)
 
 // Start launches the TUI and blocks until the user quits.
-func Start(eng *engine.Engine, cfg config.Config, loreHome string) error {
+func Start(eng *engine.Engine, cfg config.Config, loreData string) error {
 	// Alternate scroll mode: converts mouse wheel events to cursor-key sequences
 	// inside alt-screen without enabling mouse reporting. This keeps text
 	// selection working normally (no pointer capture).
@@ -25,7 +25,7 @@ func Start(eng *engine.Engine, cfg config.Config, loreHome string) error {
 	fmt.Fprint(os.Stdout, "\033[3J\033[?1007h")
 	defer fmt.Fprint(os.Stdout, "\033[?1007l")
 
-	m := New(eng, cfg, loreHome)
+	m := New(eng, cfg, loreData)
 	p := tea.NewProgram(
 		m,
 		tea.WithAltScreen(),

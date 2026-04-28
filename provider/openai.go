@@ -8,7 +8,7 @@ import (
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.vom/jrniemiec/lore/core"
+	"github.com/jrniemiec/lore/core"
 )
 
 type OpenAIProvider struct {

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.vom/jrniemiec/lore/core"
+	"github.com/jrniemiec/lore/core"
 )
 
 // FileStore stores topics on the local filesystem.

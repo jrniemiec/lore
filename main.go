@@ -1,13 +1,17 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
-	"github.vom/jrniemiec/lore/config"
-	"github.vom/jrniemiec/lore/engine"
-	"github.vom/jrniemiec/lore/tui"
+	"github.com/mattn/go-isatty"
+
+	"github.com/jrniemiec/lore/config"
+	"github.com/jrniemiec/lore/engine"
+	"github.com/jrniemiec/lore/tui"
 )
 
 // --- flag variables -------------------------------------------------------
@@ -138,17 +142,45 @@ func init() {
 	flag.IntVar(&flagDeleteLast, "delete-last", -1, "delete last N exchanges (default 1) from topic history")
 }
 
+// checkTerminal verifies the TUI is running inside iTerm2 with a dark theme.
+func checkTerminal() error {
+	if !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsCygwinTerminal(os.Stdout.Fd()) {
+		return errors.New("stdout is not a terminal — use --nw for headless mode")
+	}
+	if os.Getenv("TERM_PROGRAM") != "iTerm.app" {
+		return errors.New("lore TUI requires iTerm2 — use --nw for headless mode")
+	}
+	// COLORFGBG is set by iTerm2 as "fg;bg". Background >= 8 suggests light theme.
+	// This is a heuristic only — warn but don't block.
+	if fgbg := os.Getenv("COLORFGBG"); fgbg != "" {
+		parts := strings.SplitN(fgbg, ";", 2)
+		if len(parts) == 2 {
+			var bg int
+			fmt.Sscanf(parts[1], "%d", &bg)
+			if bg >= 8 {
+				fmt.Fprintf(os.Stderr, "lore: warning: iTerm2 profile %q may use a light background — lore is optimised for dark themes\n", os.Getenv("ITERM_PROFILE"))
+			}
+		}
+	}
+	return nil
+}
+
 func main() {
 	flag.Parse()
 	os.Exit(run())
 }
 
 func run() int {
-	cfgPath := config.DefaultConfigPath()
-	if err := config.Bootstrap(cfgPath); err != nil {
+	loreData := config.LoreData()
+	bootstrapped, err := config.Bootstrap(loreData)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "bootstrap: %v\n", err)
 		return 1
 	}
+	if bootstrapped {
+		return 0
+	}
+	cfgPath := config.DefaultConfigPath()
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
@@ -167,9 +199,13 @@ func run() int {
 		return runHeadless(cfg, cfgPath)
 	}
 
-	loreHome := config.LoreHome()
+	if err := checkTerminal(); err != nil {
+		fmt.Fprintf(os.Stderr, "lore: %v\n", err)
+		return 1
+	}
+
 	topicName := config.EffectiveTopic(cfg, flagTopic)
-	e, err := engine.New(cfg, cfgPath, loreHome, topicName, flagProfile)
+	e, err := engine.New(cfg, cfgPath, loreData, topicName, flagProfile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "engine: %v\n", err)
 		return 1
@@ -180,7 +216,7 @@ func run() int {
 			return 1
 		}
 	}
-	if err := tui.Start(e, cfg, loreHome); err != nil {
+	if err := tui.Start(e, cfg, loreData); err != nil {
 		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
 		return 1
 	}

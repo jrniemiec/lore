@@ -3,8 +3,8 @@ package strategy
 import (
 	"strings"
 
-	"github.vom/jrniemiec/lore/config"
-	"github.vom/jrniemiec/lore/core"
+	"github.com/jrniemiec/lore/config"
+	"github.com/jrniemiec/lore/core"
 )
 
 const (

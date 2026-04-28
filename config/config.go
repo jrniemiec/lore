@@ -1,12 +1,16 @@
 package config
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+//go:embed config.default.json
+var defaultConfigJSON []byte
 
 const (
 	defaultTopicName  = "default"
@@ -38,9 +42,9 @@ type Config struct {
 	Profiles       map[string]ProviderProfile `json:"profiles"`
 }
 
-// LoreHome returns the lore data directory ($LORE_HOME or ~/.lore).
-func LoreHome() string {
-	if h := os.Getenv("LORE_HOME"); h != "" {
+// LoreData returns the lore data directory ($LORE_DATA or ~/.lore).
+func LoreData() string {
+	if h := os.Getenv("LORE_DATA"); h != "" {
 		return h
 	}
 	home, err := os.UserHomeDir()
@@ -52,12 +56,12 @@ func LoreHome() string {
 
 // DefaultConfigPath returns the path to lore's config.json.
 func DefaultConfigPath() string {
-	return filepath.Join(LoreHome(), "config.json")
+	return filepath.Join(LoreData(), "config.json")
 }
 
 // DefaultTopicsRoot returns the default topics directory.
 func DefaultTopicsRoot() string {
-	return filepath.Join(LoreHome(), "topics")
+	return filepath.Join(LoreData(), "topics")
 }
 
 // Load reads config from path. Missing file returns safe defaults.
@@ -131,41 +135,44 @@ func SaveAtomic(path string, cfg Config) error {
 	return os.Rename(tmp, path)
 }
 
-// Bootstrap copies ~/.ask/config.json to lorePath, rewriting topics_root to
-// lore's own directory. Writes a minimal default if ask config is missing.
-// No-op if lorePath already exists.
-func Bootstrap(lorePath string) error {
-	if _, err := os.Stat(lorePath); err == nil {
-		return nil
+// Bootstrap creates the lore data directory on first run.
+// Returns true if bootstrap ran (caller should exit after notifying the user).
+// No-op if dataDir already exists.
+func Bootstrap(dataDir string) (bool, error) {
+	if _, err := os.Stat(dataDir); err == nil {
+		return false, nil // already exists
 	}
-	home, _ := os.UserHomeDir()
-	askPath := filepath.Join(home, ".ask", "config.json")
-	cfg, err := loadExternalConfig(askPath)
-	if err != nil {
-		cfg = Config{
-			TopicsRoot:     DefaultTopicsRoot(),
-			DefaultTopic:   defaultTopicName,
-			WindowMessages: defaultWindowMsgs,
-			Profiles:       map[string]ProviderProfile{},
-		}
-	}
-	cfg.TopicsRoot = DefaultTopicsRoot()
-	return SaveAtomic(lorePath, cfg)
-}
 
-func loadExternalConfig(path string) (Config, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return Config{}, err
+	topicsRoot := filepath.Join(dataDir, "topics")
+	defaultTopicDir := filepath.Join(topicsRoot, defaultTopicName)
+	cfgPath := filepath.Join(dataDir, "config.json")
+
+	// Create directory structure.
+	if err := os.MkdirAll(defaultTopicDir, 0755); err != nil {
+		return false, fmt.Errorf("create data dir: %w", err)
 	}
+
+	// Load embedded default config, fill in topics_root, write it out.
 	var cfg Config
-	if err := json.Unmarshal(b, &cfg); err != nil {
-		return Config{}, err
+	if err := json.Unmarshal(defaultConfigJSON, &cfg); err != nil {
+		return false, fmt.Errorf("parse default config: %w", err)
 	}
-	if cfg.Profiles == nil {
-		cfg.Profiles = map[string]ProviderProfile{}
+	cfg.TopicsRoot = topicsRoot
+	if err := SaveAtomic(cfgPath, cfg); err != nil {
+		return false, fmt.Errorf("write config: %w", err)
 	}
-	return cfg, nil
+
+	fmt.Fprintf(os.Stderr, "lore: first run — created %s\n", dataDir)
+	fmt.Fprintf(os.Stderr, "lore: created %s\n", defaultTopicDir)
+	fmt.Fprintf(os.Stderr, "lore: copied default config to %s\n", cfgPath)
+	fmt.Fprintf(os.Stderr, "lore: → edit %s to set your default profile, then run lore again.\n", cfgPath)
+	fmt.Fprintf(os.Stderr, "lore:\n")
+	fmt.Fprintf(os.Stderr, "lore: API keys are read from environment variables:\n")
+	fmt.Fprintf(os.Stderr, "lore:   Anthropic  — ANTHROPIC_API_KEY  (or LORE_ANTHROPIC_API_KEY)\n")
+	fmt.Fprintf(os.Stderr, "lore:   OpenAI     — OPENAI_API_KEY     (or LORE_OPENAI_API_KEY)\n")
+	fmt.Fprintf(os.Stderr, "lore:   Ollama     — no key needed, set LORE_OLLAMA_HOST if not localhost\n")
+
+	return true, nil
 }
 
 // ResolveProfile returns the profile for code (falls back to DefaultProfile).

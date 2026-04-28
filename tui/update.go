@@ -11,9 +11,9 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.vom/jrniemiec/lore/config"
-	"github.vom/jrniemiec/lore/core"
-	"github.vom/jrniemiec/lore/engine"
+	"github.com/jrniemiec/lore/config"
+	"github.com/jrniemiec/lore/core"
+	"github.com/jrniemiec/lore/engine"
 )
 
 // Update handles all incoming messages.

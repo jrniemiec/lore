@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.vom/jrniemiec/lore/config"
-	"github.vom/jrniemiec/lore/core"
+	"github.com/jrniemiec/lore/config"
+	"github.com/jrniemiec/lore/core"
 )
 
 // New creates a Provider from a ProviderProfile.

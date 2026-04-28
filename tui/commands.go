@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.vom/jrniemiec/lore/config"
-	"github.vom/jrniemiec/lore/core"
-	"github.vom/jrniemiec/lore/store"
+	"github.com/jrniemiec/lore/config"
+	"github.com/jrniemiec/lore/core"
+	"github.com/jrniemiec/lore/store"
 )
 
 // knownCommands is the set of command names (without leading /) for bare-word recognition.
@@ -703,13 +703,13 @@ func cmdStatus(m *Model) cmdResult {
 	lines := []string{
 		fmt.Sprintf("topic:    %s", m.eng.TopicName()),
 		fmt.Sprintf("profile:  %s (%s/%s)", m.eng.ProfileCode(), p.Provider, p.Model),
-		fmt.Sprintf("lore home: %s", m.eng.LoreHome()),
+		fmt.Sprintf("lore home: %s", m.eng.LoreData()),
 	}
 	return okResult("/status", lines)
 }
 
 func cmdStats(m *Model) cmdResult {
-	logPath := store.UsageLogPath(m.eng.LoreHome())
+	logPath := store.UsageLogPath(m.eng.LoreData())
 	entries, err := store.ReadUsageLog(logPath)
 	if err != nil || len(entries) == 0 {
 		return okResult("/stats", []string{"(no usage recorded)"})

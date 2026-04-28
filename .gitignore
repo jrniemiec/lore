@@ -12,8 +12,8 @@ cmd/
 go.work
 go.work.sum
 
-#app sym link
-ask
+#lore sym link
+lore
 
 # IDE / editor
 .vscode/

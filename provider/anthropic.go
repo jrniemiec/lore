@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.vom/jrniemiec/lore/core"
+	"github.com/jrniemiec/lore/core"
 )
 
 const (

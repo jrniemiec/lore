@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.vom/jrniemiec/lore/config"
-	"github.vom/jrniemiec/lore/core"
-	"github.vom/jrniemiec/lore/provider"
-	"github.vom/jrniemiec/lore/store"
-	"github.vom/jrniemiec/lore/strategy"
+	"github.com/jrniemiec/lore/config"
+	"github.com/jrniemiec/lore/core"
+	"github.com/jrniemiec/lore/provider"
+	"github.com/jrniemiec/lore/store"
+	"github.com/jrniemiec/lore/strategy"
 )
 
 // Engine is the shared session object used by both headless and TUI modes.
@@ -23,7 +23,7 @@ import (
 type Engine struct {
 	cfg      config.Config
 	cfgPath  string
-	loreHome string
+	loreData string
 	st       core.Store
 
 	// active session state
@@ -56,11 +56,11 @@ type ChatResult struct {
 
 // New creates an Engine, initialising the provider for profileCode and loading
 // the topic. Pass empty strings to use the config defaults.
-func New(cfg config.Config, cfgPath, loreHome, topicName, profileCode string) (*Engine, error) {
+func New(cfg config.Config, cfgPath, loreData, topicName, profileCode string) (*Engine, error) {
 	e := &Engine{
 		cfg:      cfg,
 		cfgPath:  cfgPath,
-		loreHome: loreHome,
+		loreData: loreData,
 		st:       store.New(cfg.TopicsRoot),
 	}
 	if err := e.SwitchProfile(profileCode); err != nil {
@@ -188,7 +188,7 @@ func (e *Engine) Topic() *core.Topic             { return e.topic }
 func (e *Engine) ProfileCode() string            { return e.profileCode }
 func (e *Engine) Profile() config.ProviderProfile { return e.profile }
 func (e *Engine) Config() config.Config          { return e.cfg }
-func (e *Engine) LoreHome() string               { return e.loreHome }
+func (e *Engine) LoreData() string               { return e.loreData }
 
 func (e *Engine) IsStreaming() bool {
 	e.mu.Lock()
@@ -395,7 +395,7 @@ func (e *Engine) SetDefaultProfile(code string) error {
 // --- Usage logging --------------------------------------------------------
 
 func (e *Engine) appendUsageLog(u core.Usage) {
-	logPath := store.UsageLogPath(e.loreHome)
+	logPath := store.UsageLogPath(e.loreData)
 	inPer1M, outPer1M, hasPricing := config.ExtractPricing(e.profile.Info)
 	var cost float64
 	if hasPricing {

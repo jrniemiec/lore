@@ -8,7 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.vom/jrniemiec/lore/config"
+	"github.com/jrniemiec/lore/config"
 )
 
 var multiBlankRE = regexp.MustCompile(`\n{2,}`)

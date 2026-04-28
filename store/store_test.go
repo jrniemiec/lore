@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.vom/jrniemiec/lore/core"
+	"github.com/jrniemiec/lore/core"
 )
 
 // newTestStore creates a FileStore backed by a temp directory.

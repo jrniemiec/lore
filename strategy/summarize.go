@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.vom/jrniemiec/lore/core"
+	"github.com/jrniemiec/lore/core"
 )
 
 // SummarizeStrategy keeps recent messages verbatim and compresses older history

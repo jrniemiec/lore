@@ -1,4 +1,4 @@
-module github.vom/jrniemiec/lore
+module github.com/jrniemiec/lore
 
 go 1.24.2
 

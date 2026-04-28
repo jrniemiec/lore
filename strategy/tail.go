@@ -1,6 +1,6 @@
 package strategy
 
-import "github.vom/jrniemiec/lore/core"
+import "github.com/jrniemiec/lore/core"
 
 // TailStrategy keeps the last N user turns of history.
 type TailStrategy struct {

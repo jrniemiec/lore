@@ -53,6 +53,7 @@ run: ## Run the app (pass args via ARGS="...")
 .PHONY: install
 install: test build ## Install into ~/dev/bin
 	@mkdir -p "$(DEV_BIN)"
+	@rm -f "$(DEV_BIN)/$(BIN_NAME)"
 	@cp "$(OUT)" "$(DEV_BIN)/$(BIN_NAME)"
 	@chmod +x "$(DEV_BIN)/$(BIN_NAME)"
 	@echo "Installed: $(DEV_BIN)/$(BIN_NAME)"

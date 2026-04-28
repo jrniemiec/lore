@@ -12,10 +12,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.vom/jrniemiec/lore/config"
-	"github.vom/jrniemiec/lore/core"
-	"github.vom/jrniemiec/lore/engine"
-	"github.vom/jrniemiec/lore/store"
+	"github.com/jrniemiec/lore/config"
+	"github.com/jrniemiec/lore/core"
+	"github.com/jrniemiec/lore/engine"
+	"github.com/jrniemiec/lore/store"
 )
 
 // focusPane identifies which pane has keyboard focus.
@@ -55,7 +55,7 @@ type ttsDoneMsg struct {
 type Model struct {
 	eng      *engine.Engine
 	cfg      config.Config
-	loreHome string
+	loreData string
 
 	// layout (set by WindowSizeMsg)
 	width  int
@@ -131,7 +131,7 @@ type cmdResult struct {
 }
 
 // New creates a ready-to-run Model, loading existing history.
-func New(eng *engine.Engine, cfg config.Config, loreHome string) Model {
+func New(eng *engine.Engine, cfg config.Config, loreData string) Model {
 	ta := textarea.New()
 	ta.Placeholder = ""
 	ta.ShowLineNumbers = false
@@ -165,7 +165,7 @@ func New(eng *engine.Engine, cfg config.Config, loreHome string) Model {
 	m := Model{
 		eng:           eng,
 		cfg:           cfg,
-		loreHome:      loreHome,
+		loreData:      loreData,
 		conv:          vp,
 		input:         ta,
 		focus:         paneInput,
@@ -215,7 +215,7 @@ func (m *Model) loadHistory() {
 
 // loadUsageStats reads the usage log into topicStats and sessionStats.
 func (m *Model) loadUsageStats() {
-	logPath := store.UsageLogPath(m.loreHome)
+	logPath := store.UsageLogPath(m.loreData)
 	entries, err := store.ReadUsageLog(logPath)
 	if err != nil || len(entries) == 0 {
 		return

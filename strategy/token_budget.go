@@ -1,6 +1,6 @@
 package strategy
 
-import "github.vom/jrniemiec/lore/core"
+import "github.com/jrniemiec/lore/core"
 
 // TokenBudgetStrategy keeps the most recent messages that fit within a token budget.
 // Oldest messages are dropped first.

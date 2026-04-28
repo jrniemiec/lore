@@ -44,9 +44,22 @@
 
 ---
 
+## Requirements
+
+**Terminal:** The TUI requires [iTerm2](https://iterm2.com) with a **dark background theme**. Other terminals (macOS Terminal.app, VS Code terminal, Emacs shell, vterm) are not supported for TUI mode. Use `--nw` (headless) in those environments.
+
+> Light theme support is planned for a future release.
+
+**API keys:** Set in your environment before running:
+- Anthropic: `ANTHROPIC_API_KEY` (or `LORE_ANTHROPIC_API_KEY`)
+- OpenAI: `OPENAI_API_KEY` (or `LORE_OPENAI_API_KEY`)
+- Ollama: no key needed — set `LORE_OLLAMA_HOST` if not on localhost
+
+---
+
 ## Installation
 
-**Requirements:** Go 1.24 or later.
+**Go:** 1.24 or later required to build from source.
 
 ```bash
 git clone <repo-url>
