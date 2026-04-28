@@ -34,7 +34,8 @@
 - **File injection** — embed file content into any prompt with `@name`, `@./path`, `@~/path`, or `@/abs/path`; multiple refs per prompt
 - **Resources** — per-topic file library; managed with `/resource-add`, `/resource-list`, `/resource-remove`
 - **Exchange navigation** — Tab into the conversation, browse with arrows, expand/collapse, delete, speak
-- **Text-to-speech** — `s` speaks any exchange; `/play-all` queues the whole conversation
+- **Text-to-speech** — `s` speaks any exchange; `/play-all` queues the whole conversation; `/tts on` auto-speaks every response
+- **Model override** — `-m <model>` at startup overrides the model within the active profile without creating a new profile entry
 - **Headless mode** — full CLI for scripting: pipe stdin, read from files, all admin ops as flags
 - **Personal notes** — `// text` saves a note to history that is never sent to the LLM
 - **Input history** — bash-style Up/Down browsing (in-memory, max 128 entries)
@@ -66,10 +67,12 @@ The binary is self-contained. No external runtime is required for the core funct
 ## Quick start
 
 ```bash
-lore                          # open TUI on default topic
-lore -t myproject             # open TUI on topic "myproject"
-lore -p gpt4 "explain X"     # headless: one-shot with a specific profile
-echo "summarize this" | lore  # headless: piped prompt
+lore                               # open TUI on default topic
+lore -t myproject                  # open TUI on topic "myproject"
+lore -t myproject -p sonnet        # open TUI on topic + named profile
+lore -t myproject -m claude-opus-4-6  # open TUI with model override
+lore -p gpt4 "explain X"          # headless: one-shot with a specific profile
+echo "summarize this" | lore       # headless: piped prompt
 ```
 
 On first run, `lore` bootstraps `~/.lore/config.json` from `~/.ask/config.json` if it exists, rewriting `topics_root` to `~/.lore/topics/`. If neither exists, an empty config is created — add at least one profile to get started (see [Configuration](#configuration)).
@@ -551,6 +554,8 @@ Optional. Requires `~/dev/bin/tts-play` on PATH.
 
 ### TUI
 
+**Manual playback:**
+
 | Action | How |
 |---|---|
 | Speak focused exchange | `s` (in conversation pane nav mode) |
@@ -558,7 +563,15 @@ Optional. Requires `~/dev/bin/tts-play` on PATH.
 | Play all exchanges in sequence | `/play-all` |
 | Stop play-all | `/play-all` again, or `s`, or `Ctrl+C` |
 
-While speaking, the status bar shows `❄ speaking #N ●●●●●` with a brightness wave animation, and the active exchange's box header shows `♪`.
+**Auto-mode** — speak every response automatically as it finishes streaming:
+
+| Command | Effect |
+|---|---|
+| `/tts on` | Enable auto-mode |
+| `/tts off` | Disable auto-mode; stops any in-flight playback |
+| `/tts` | Toggle auto-mode |
+
+When auto-mode is on and nothing is playing, the status bar shows a `♪ auto` badge. While speaking, it shows `❄ speaking #N ●●●●●` with a brightness wave animation. The active exchange's box header also shows `♪`.
 
 Content passed to `tts-play`:
 - Regular exchange: user message + blank line + assistant reply
