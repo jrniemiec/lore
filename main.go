@@ -14,6 +14,9 @@ import (
 	"github.com/jrniemiec/lore/tui"
 )
 
+// version is set at build time via -ldflags "-X main.version=x.y.z".
+var version = "dev"
+
 // --- flag variables -------------------------------------------------------
 
 var (
@@ -43,6 +46,7 @@ var (
 	flagSize     int
 	flagHelpNoun string
 	flagHelp     bool
+	flagVersion  bool
 
 	// admin — read/display
 	flagTopicList    bool
@@ -110,6 +114,8 @@ func init() {
 	flag.IntVar(&flagSize, "size", 20, "exchanges/lines to show for topic-history/topic-summary")
 	flag.StringVar(&flagHelpNoun, "help-for", "", "show help for a command group: topic|resource|profile|system|session|info|files|all")
 	flag.BoolVar(&flagHelp, "h", false, "show help (alias for --help-for all)")
+	flag.BoolVar(&flagVersion, "version", false, "print version and exit")
+	flag.BoolVar(&flagVersion, "v", false, "print version and exit")
 
 	// admin — read/display
 	flag.BoolVar(&flagTopicList, "topic-list", false, "list all topics")
@@ -188,6 +194,11 @@ func run() int {
 	}
 	if flagHistoryWindow > 0 {
 		cfg.WindowMessages = flagHistoryWindow
+	}
+
+	if flagVersion {
+		fmt.Printf("lore %s\n", version)
+		return 0
 	}
 
 	if flagHelp {

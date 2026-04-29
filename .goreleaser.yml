@@ -1,0 +1,48 @@
+version: 2
+
+project_name: lore
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: .
+    binary: lore
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: jrniemiec
+    name: lore
+
+brews:
+  - name: lore
+    repository:
+      owner: jrniemiec
+      name: homebrew-lore
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/jrniemiec/lore"
+    description: "Terminal-first AI chat for daily LLM work"
+    license: "MIT"
+    install: |
+      bin.install "lore"
+    test: |
+      system "#{bin}/lore --nw --status"
