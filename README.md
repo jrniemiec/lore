@@ -46,7 +46,7 @@
 
 ## Requirements
 
-**Terminal:** The TUI requires [iTerm2](https://iterm2.com). Both dark and light background profiles are supported. Other terminals (macOS Terminal.app, VS Code terminal, Emacs shell, vterm) are not supported for TUI mode. Use `--nw` (headless) in those environments.
+**Terminal:** The TUI runs on [iTerm2](https://iterm2.com) and macOS [Terminal.app](https://support.apple.com/guide/terminal/welcome/mac). Both dark and light background profiles are supported on both terminals. Other terminals (VS Code terminal, Emacs shell, vterm) are not currently supported for TUI mode — use `--nw` (headless) in those environments.
 
 **API keys:** Set in your environment before running:
 - Anthropic: `ANTHROPIC_API_KEY` (or `LORE_ANTHROPIC_API_KEY`)
@@ -202,8 +202,8 @@ Three built-in themes, selected automatically or via flag/command:
 | Theme | Description |
 |---|---|
 | `dark` | Nord palette — cool blues (default for dark backgrounds) |
-| `light` | Optimised for light-background iTerm2 profiles |
-| `auto` | Detects from `COLORFGBG` at startup (default) |
+| `light` | Optimised for light-background profiles |
+| `auto` | Auto-detects at startup: iTerm2 uses `COLORFGBG`; Terminal.app queries the background colour via OSC 11 (default) |
 
 **At launch:**
 ```bash

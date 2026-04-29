@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/mattn/go-isatty"
 
@@ -150,25 +149,10 @@ func init() {
 	flag.IntVar(&flagDeleteLast, "delete-last", -1, "delete last N exchanges (default 1) from topic history")
 }
 
-// checkTerminal verifies the TUI is running inside iTerm2 with a dark theme.
+// checkTerminal verifies the TUI is running in an interactive terminal.
 func checkTerminal() error {
 	if !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsCygwinTerminal(os.Stdout.Fd()) {
 		return errors.New("stdout is not a terminal — use --nw for headless mode")
-	}
-	if os.Getenv("TERM_PROGRAM") != "iTerm.app" {
-		return errors.New("lore TUI requires iTerm2 — use --nw for headless mode")
-	}
-	// COLORFGBG is set by iTerm2 as "fg;bg". Background >= 8 suggests light theme.
-	// This is a heuristic only — warn but don't block.
-	if fgbg := os.Getenv("COLORFGBG"); fgbg != "" {
-		parts := strings.SplitN(fgbg, ";", 2)
-		if len(parts) == 2 {
-			var bg int
-			fmt.Sscanf(parts[1], "%d", &bg)
-			if bg >= 8 {
-				fmt.Fprintf(os.Stderr, "lore: warning: iTerm2 profile %q may use a light background — lore is optimised for dark themes\n", os.Getenv("ITERM_PROFILE"))
-			}
-		}
 	}
 	return nil
 }

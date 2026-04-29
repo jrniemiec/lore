@@ -117,20 +117,32 @@ func ApplyTheme(mode string) {
 	}
 }
 
-// DetectTheme sets ActiveTheme based on the COLORFGBG environment variable.
-// iTerm2 sets COLORFGBG as "fg;bg". A background value >= 8 indicates a light theme.
+// DetectTheme sets ActiveTheme based on terminal-specific heuristics.
+// On iTerm2, COLORFGBG is read (fg;bg — bg >= 8 means light).
+// On other terminals, defaults to dark.
 func DetectTheme() {
-	fgbg := os.Getenv("COLORFGBG")
-	if fgbg == "" {
-		return
-	}
-	parts := strings.SplitN(fgbg, ";", 2)
-	if len(parts) != 2 {
-		return
-	}
-	var bg int
-	fmt.Sscanf(parts[1], "%d", &bg)
-	if bg >= 8 {
-		ActiveTheme = Light
+	switch ActiveTerminal {
+	case TermITerm2:
+		// iTerm2 sets COLORFGBG="fg;bg"; bg >= 8 means light background.
+		fgbg := os.Getenv("COLORFGBG")
+		if fgbg == "" {
+			return
+		}
+		parts := strings.SplitN(fgbg, ";", 2)
+		if len(parts) != 2 {
+			return
+		}
+		var bg int
+		fmt.Sscanf(parts[1], "%d", &bg)
+		if bg >= 8 {
+			ActiveTheme = Light
+		}
+	case TermApple:
+		// Terminal.app has no env var for background color — use OSC 11 query.
+		if queryBackgroundLight() {
+			ActiveTheme = Light
+		}
+	default:
+		// No reliable detection — stay with default dark theme.
 	}
 }

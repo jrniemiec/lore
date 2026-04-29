@@ -714,6 +714,8 @@ func cmdStatus(m *Model) cmdResult {
 		fmt.Sprintf("topic:    %s", m.eng.TopicName()),
 		fmt.Sprintf("profile:  %s (%s/%s)", m.eng.ProfileCode(), p.Provider, p.Model),
 		fmt.Sprintf("lore home: %s", m.eng.LoreData()),
+		fmt.Sprintf("terminal: %s", TerminalName()),
+		fmt.Sprintf("theme:    %s", m.themeMode),
 	}
 	return okResult("/status", lines)
 }
@@ -1063,16 +1065,19 @@ func cmdTheme(m *Model, args []string) cmdResult {
 	case "light":
 		m.themeMode = "light"
 		ActiveTheme = Light
+		AdjustThemeForTerminal()
 		m.rebuildConvContent()
 		return okResult("/theme light", []string{"theme set to light"})
 	case "dark":
 		m.themeMode = "dark"
 		ActiveTheme = Nord
+		AdjustThemeForTerminal()
 		m.rebuildConvContent()
 		return okResult("/theme dark", []string{"theme set to dark (Nord)"})
 	case "auto":
 		m.themeMode = "auto"
 		DetectTheme()
+		AdjustThemeForTerminal()
 		m.rebuildConvContent()
 		return okResult("/theme auto", []string{fmt.Sprintf("theme set to auto (detected: %s)", detectedThemeName())})
 	case "options":
@@ -1089,6 +1094,9 @@ func cmdTheme(m *Model, args []string) cmdResult {
 
 // detectedThemeName returns the name of the theme DetectTheme() would select.
 func detectedThemeName() string {
+	if ActiveTerminal != TermITerm2 {
+		return "dark"
+	}
 	fgbg := os.Getenv("COLORFGBG")
 	if fgbg == "" {
 		return "dark"

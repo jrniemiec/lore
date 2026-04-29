@@ -179,6 +179,8 @@ func New(eng *engine.Engine, cfg config.Config, loreData string) Model {
 		cursorVisible: true,
 		themeMode:     "auto",
 	}
+	m.cmdScroll = viewport.New(0, 0)
+	m.cmdScroll.Style = lipgloss.NewStyle() // no background
 	m.loadUsageStats()
 	m.loadHistory()
 	return m

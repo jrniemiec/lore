@@ -74,19 +74,26 @@ func (m Model) View() string {
 // fg wraps text in a truecolor foreground sequence and resets all attributes
 // afterward. The reset (\033[0m) clears any stale background from bubbles.
 func fg(col lipgloss.Color, text string) string {
-	r, g, b, ok := hexToRGB(string(col))
-	if !ok {
-		return text
+	s := string(col)
+	if r, g, b, ok := hexToRGB(s); ok {
+		return fmt.Sprintf("\033[38;2;%d;%d;%dm%s\033[0m", r, g, b, text)
 	}
-	return fmt.Sprintf("\033[38;2;%d;%d;%dm%s\033[0m", r, g, b, text)
+	// ANSI 256-color index (e.g. "241")
+	if n, err := strconv.Atoi(s); err == nil {
+		return fmt.Sprintf("\033[38;5;%dm%s\033[0m", n, text)
+	}
+	return text
 }
 
 func fgBold(col lipgloss.Color, text string) string {
-	r, g, b, ok := hexToRGB(string(col))
-	if !ok {
-		return "\033[1m" + text + "\033[0m"
+	s := string(col)
+	if r, g, b, ok := hexToRGB(s); ok {
+		return fmt.Sprintf("\033[1;38;2;%d;%d;%dm%s\033[0m", r, g, b, text)
 	}
-	return fmt.Sprintf("\033[1;38;2;%d;%d;%dm%s\033[0m", r, g, b, text)
+	if n, err := strconv.Atoi(s); err == nil {
+		return fmt.Sprintf("\033[1;38;5;%dm%s\033[0m", n, text)
+	}
+	return "\033[1m" + text + "\033[0m"
 }
 
 // lerpColor interpolates between c1 (t=0) and c2 (t=1).
@@ -125,11 +132,14 @@ func waveDots(n, peak int, bright, dim lipgloss.Color) string {
 }
 
 func fgFaint(col lipgloss.Color, text string) string {
-	r, g, b, ok := hexToRGB(string(col))
-	if !ok {
-		return "\033[2m" + text + "\033[0m"
+	s := string(col)
+	if r, g, b, ok := hexToRGB(s); ok {
+		return fmt.Sprintf("\033[2;38;2;%d;%d;%dm%s\033[0m", r, g, b, text)
 	}
-	return fmt.Sprintf("\033[2;38;2;%d;%d;%dm%s\033[0m", r, g, b, text)
+	if n, err := strconv.Atoi(s); err == nil {
+		return fmt.Sprintf("\033[2;38;5;%dm%s\033[0m", n, text)
+	}
+	return "\033[2m" + text + "\033[0m"
 }
 
 func hexToRGB(hex string) (r, g, b int64, ok bool) {
@@ -635,15 +645,15 @@ func renderStatsLine(m *Model, sep string) string {
 			cost := config.CalcCost(r.Usage.InputTokens, r.Usage.OutputTokens, inPer1M, outPer1M)
 			s += " · " + config.FormatCost(cost)
 		}
-		center = fg("#6B7A8D", s)
+		center = fg(t.Dimmed, s)
 	}
 
 	// Right: topic + global cumulative stats.
 	var right string
 	if m.topicStats.Calls > 0 {
-		right = fg("#6B7A8D", fmt.Sprintf("topic: %d · %s",
+		right = fg(t.Dimmed, fmt.Sprintf("topic: %d · %s",
 			m.topicStats.Calls, config.FormatCost(m.topicStats.CostUSD)))
-		right += fg("#6B7A8D", fmt.Sprintf("  total: %d · %s",
+		right += fg(t.Dimmed, fmt.Sprintf("  total: %d · %s",
 			m.sessionStats.Calls, config.FormatCost(m.sessionStats.CostUSD)))
 	}
 

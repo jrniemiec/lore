@@ -22,17 +22,29 @@ func Start(eng *engine.Engine, cfg config.Config, loreData string, theme string)
 	// Clear the terminal scrollback buffer so the native scrollbar doesn't
 	// expose old shell output when dragged. Then enable alternate scroll mode
 	// (wheel → cursor-key) without capturing mouse events.
+	DetectTerminal()
 	ApplyTheme(theme)
+	AdjustThemeForTerminal()
 
-	fmt.Fprint(os.Stdout, "\033[3J\033[?1007h")
-	defer fmt.Fprint(os.Stdout, "\033[?1007l")
+	// Clear scrollback so shell history isn't visible above the TUI.
+	fmt.Fprint(os.Stdout, "\033[3J")
+	// Alternate scroll mode (wheel → cursor keys) works reliably on iTerm2.
+	// On Terminal.app it causes scrolling past the top of the UI into shell history.
+	if ActiveTerminal == TermITerm2 {
+		fmt.Fprint(os.Stdout, "\033[?1007h")
+		defer fmt.Fprint(os.Stdout, "\033[?1007l")
+	}
 
 	m := New(eng, cfg, loreData)
 	m.themeMode = theme
-	p := tea.NewProgram(
-		m,
-		tea.WithAltScreen(),
-	)
+
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	// On Terminal.app, enable mouse cell motion to capture scroll events and
+	// prevent them from reaching the terminal's native scrollback buffer.
+	if ActiveTerminal != TermITerm2 {
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	p := tea.NewProgram(m, opts...)
 	programSend = func(msg tea.Msg) { p.Send(msg) }
 	_, err := p.Run()
 	programSend = nil
