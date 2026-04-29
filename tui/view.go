@@ -284,12 +284,11 @@ func renderConversation(m *Model) (string, []int) {
 			noteLines := strings.Split(noteText, "\n")
 			if (len(noteLines) > 5 || len(noteText) > 512) && !ex.expanded {
 				noteText = strings.Join(noteLines[:5], "\n")
-				noteText += "\n" + fg("#6B7A8D", fmt.Sprintf("... (%d more lines)", len(noteLines)-5))
+				noteText += "\n" + fg(t.Dimmed, fmt.Sprintf("... (%d more lines)", len(noteLines)-5))
 			}
 			noteRaw := wordWrap(compactLines(noteText), wrapWidth)
-			noteColor := lipgloss.Color("#6B7A8D") // muted blue-grey
-			turnContent = addPrefix(fgLines(noteColor, noteRaw),
-				fg(noteColor, "📌 "),
+			turnContent = addPrefix(fgLines(t.UserText, noteRaw),
+				fg(t.UserText, "📌 "),
 				"  ")
 		} else {
 			userText := ex.userMsg.Content
@@ -315,17 +314,30 @@ func renderConversation(m *Model) (string, []int) {
 
 		speaking := m.ttsExIdx == i
 		if focused || deleting || speaking {
-			header := fg(t.Dimmed, ex.userMsg.Time.Format("15:04"))
+			left := fg(t.Dimmed, ex.userMsg.Time.Format("15:04"))
 			if speaking {
-				header += fgBold(t.StreamingText, "  ♪")
+				left += fgBold(t.StreamingText, "  ♪")
 			}
-			if (strings.Count(ex.userMsg.Content, "\n") >= 5 || len(ex.userMsg.Content) > 512) && !deleting {
+			// Right-aligned key hints (shown when focused, not deleting).
+			var header string
+			if focused && !deleting {
+				expandHint := "v expand"
 				if ex.expanded {
-					header += fg(t.Dimmed, "  · e to collapse")
-				} else {
-					header += fg(t.Dimmed, "  · e to expand")
+					expandHint = "v collapse"
 				}
+				hints := fg(t.Dimmed, expandHint+" · s speak · d delete")
+				innerW := m.width - 4
+				leftW := visibleWidth(left)
+				hintsW := visibleWidth(hints)
+				pad := innerW - leftW - hintsW
+				if pad < 1 {
+					pad = 1
+				}
+				header = left + strings.Repeat(" ", pad) + hints
+			} else {
+				header = left
 			}
+
 			if deleting {
 				turnContent = boxStyleRed.Render(header + "\n" + turnContent)
 			} else {
@@ -575,7 +587,7 @@ func renderCompletionPane(m *Model) string {
 		var line string
 		cmdPart := fmt.Sprintf(" %-*s  ", maxCmd, e.cmd)
 		if i == m.completionIdx {
-			line = "\033[7m" + cmdPart + e.desc + "\033[27m"
+			line = fg(t.TopBarText, cmdPart+e.desc)
 		} else {
 			line = fg(t.InputText, cmdPart) + fg(t.Dimmed, e.desc)
 		}

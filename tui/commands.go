@@ -104,6 +104,10 @@ func handleCommand(m *Model, input string) cmdResult {
 	case "/play-all":
 		return cmdPlayAll(m)
 
+	// --- nav ---
+	case "/block-keys":
+		return cmdBlockKeys()
+
 	// --- info ---
 	case "/config":
 		return cmdConfig(m)
@@ -902,6 +906,7 @@ func allCompletions() []completionEntry {
 		{"/tts [on|off]", "toggle TTS auto-mode"},
 		{"/fold-all", "expand or collapse all long entries"},
 		{"/play-all", "play all entries via TTS (toggle)"},
+		{"/block-keys", "show keys available when a block is focused"},
 		{"/exit", "exit lore"},
 	}
 }
@@ -972,6 +977,9 @@ func cmdHelp(cmd string, args []string) cmdResult {
 			{"/fold-all", "expand or collapse all long entries (toggle)"},
 			{"/play-all", "play all entries via TTS — s or Ctrl+C to stop"},
 		},
+		"nav": {
+			{"/block-keys", "show keys available when a block is focused"},
+		},
 	}
 
 	filesSection := []string{
@@ -993,7 +1001,7 @@ func cmdHelp(cmd string, args []string) cmdResult {
 		"    summarize @notes.txt and cross-check with @~/docs/spec.md",
 	}
 
-	order := []string{"topic", "resource", "profile", "system", "info", "notes", "files"}
+	order := []string{"topic", "resource", "profile", "system", "info", "notes", "nav", "files"}
 
 	noun := ""
 	if len(args) > 0 {
@@ -1020,12 +1028,28 @@ func cmdHelp(cmd string, args []string) cmdResult {
 			}
 			lines = append(lines, renderGroup(g)...)
 		}
-	} else if noun == "files" || groups[noun] != nil {
+	} else if noun == "files" || noun == "nav" || groups[noun] != nil {
 		lines = renderGroup(noun)
 	} else {
 		return errResult(cmd+" "+noun, fmt.Sprintf("unknown group %q — available: %s", noun, strings.Join(order, "|")))
 	}
 	return okResult(cmd, lines)
+}
+
+// =============================================================================
+// nav commands
+// =============================================================================
+
+func cmdBlockKeys() cmdResult {
+	return okResult("/block-keys", []string{
+		"Block navigation keys (enter nav mode with Ctrl+N, then ↑/↓ to select a block):",
+		"",
+		fmt.Sprintf("  %-10s  %s", "v", "expand / collapse long content"),
+		fmt.Sprintf("  %-10s  %s", "s", "speak block via TTS (toggle)"),
+		fmt.Sprintf("  %-10s  %s", "d", "delete block (with confirmation)"),
+		fmt.Sprintf("  %-10s  %s", "Ctrl+N", "return to input pane"),
+		fmt.Sprintf("  %-10s  %s", "Esc", "return to input pane"),
+	})
 }
 
 // =============================================================================

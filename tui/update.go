@@ -178,6 +178,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Any key dismisses the cmd pane (unless a pending action requires confirmation).
+		if m.cmdPaneOpen && m.pendingAction == nil && m.focus == paneInput {
+			m.cmdPaneOpen = false
+			m.lastCmd = nil
+			m.syncLayout()
+		}
+
 		switch {
 
 		// Ctrl+C: stop TTS, cancel stream, or quit
@@ -243,14 +250,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rebuildConvContent()
 			}
 
-		// Enter: fill completion, confirm pending action, send (input pane), or dismiss (conv pane)
-		case key.Matches(msg, keys.Send):
+		// Tab: fill selected completion into input without executing
+		case key.Matches(msg, keys.FillCompletion):
 			if len(m.completionItems) > 0 && m.completionIdx >= 0 {
 				m.input.SetValue(m.completionItems[m.completionIdx].cmd + " ")
 				m.input.CursorEnd()
 				m.completionItems = nil
 				m.completionIdx = -1
 				m.syncLayout()
+			}
+
+		// Enter: execute completion, confirm pending action, send (input pane), or dismiss (conv pane)
+		case key.Matches(msg, keys.Send):
+			if len(m.completionItems) > 0 && m.completionIdx >= 0 {
+				selected := m.completionItems[m.completionIdx].cmd
+				m.completionItems = nil
+				m.completionIdx = -1
+				m.input.SetValue("")
+				m.syncLayout()
+				val := strings.TrimSpace(selected)
+				if strings.HasPrefix(val, "/") {
+					result := handleCommand(&m, val)
+					if result.quit {
+						m.killTTS()
+						return m, tea.Quit
+					}
+					m.lastCmd = &result
+					m.cmdPaneOpen = true
+					if result.isError {
+						m.focus = paneInput
+						m.input.Focus()
+					} else {
+						m.focus = paneCmd
+						m.input.Blur()
+					}
+					m.rebuildConvContent()
+					m.cmdScroll.SetContent(renderCmdOutput(&m))
+					m.cmdScroll.GotoTop()
+					m.syncLayout()
+				}
 			} else if m.focus == paneCmd && m.pendingAction == nil {
 				m.cmdPaneOpen = false
 				m.lastCmd = nil
@@ -461,8 +499,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.ClearScreen):
 			return m, tea.ClearScreen
 
-		// Tab: cycle focus between input and conv pane
-		case key.Matches(msg, keys.FocusNext):
+		// Ctrl+N: toggle focus between input and conversation pane
+		case key.Matches(msg, keys.FocusConv):
 			if m.focus == paneInput {
 				m.focus = paneConv
 				m.input.Blur()
@@ -484,7 +522,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// TODO: profile picker popup
 
 		default:
-			// e/d/s: nav mode actions — only when paneConv is focused.
+			// v/d/s: nav mode actions — only when paneConv is focused.
 			if m.focus == paneConv && m.focusedExIdx >= 0 && msg.Type == tea.KeyRunes {
 				switch string(msg.Runes) {
 				case "s":
@@ -501,7 +539,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						cmds = append(cmds, startTTS(text, exIdx, &m))
 					}
 					return m, tea.Batch(cmds...)
-				case "e":
+				case "v":
 					ex := &m.exchanges[m.focusedExIdx]
 					if strings.Count(ex.userMsg.Content, "\n") >= 5 || len(ex.userMsg.Content) > 512 {
 						ex.expanded = !ex.expanded

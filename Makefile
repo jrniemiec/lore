@@ -127,3 +127,9 @@ repo-commit: ## git-commit called for conditional commit
 .PHONY: repo-push
 repo-push: ## then push to origin
 	@git-push
+
+.PHONY: release
+release: ## Tag and push a release (usage: make release VERSION=0.9.3)
+	@if [ -z "$(VERSION)" ]; then echo "usage: make release VERSION=x.y.z"; exit 1; fi
+	git tag v$(VERSION)
+	git push origin v$(VERSION)

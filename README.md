@@ -33,13 +33,13 @@
 - **Three context strategies** — tail, token-budget, summarize (rolling LLM-generated summary)
 - **File injection** — embed file content into any prompt with `@name`, `@./path`, `@~/path`, or `@/abs/path`; multiple refs per prompt
 - **Resources** — per-topic file library; managed with `/resource-add`, `/resource-list`, `/resource-remove`
-- **Exchange navigation** — Tab into the conversation, browse with arrows, expand/collapse, delete, speak
+- **Exchange navigation** — `Ctrl+N` into the conversation, browse with arrows, expand/collapse, delete, speak
 - **Text-to-speech** — `s` speaks any exchange; `/play-all` queues the whole conversation; `/tts on` auto-speaks every response
 - **Model override** — `-m <model>` at startup overrides the model within the active profile without creating a new profile entry
 - **Headless mode** — full CLI for scripting: pipe stdin, read from files, all admin ops as flags
 - **Personal notes** — `// text` saves a note to history that is never sent to the LLM
 - **Input history** — bash-style Up/Down browsing (in-memory, max 128 entries)
-- **Command completion** — Tab-complete slash commands as you type
+- **Command completion** — type `/` to see completions; Tab fills selection into input, Enter executes it
 - **Single binary** — no runtime dependencies; providers and TTS are optional
 
 ---
@@ -152,7 +152,7 @@ Config lives at `~/.lore/config.json` (override with `LORE_HOME=/path/to/dir`).
 
 | Provider | Primary env var | Override |
 |---|---|---|
-| Anthropic | `CLAUDE_API_KEY` | `LORE_ANTHROPIC_API_KEY` |
+| Anthropic | `ANTHROPIC_API_KEY` | `LORE_ANTHROPIC_API_KEY` |
 | OpenAI | `OPENAI_API_KEY` | `LORE_OPENAI_API_KEY` |
 | Ollama | — | `LORE_OLLAMA_HOST` (or `host` in profile) |
 
@@ -216,19 +216,20 @@ Two built-in themes selectable via `var ActiveTheme` in `tui/theme.go`:
 | `Shift+Enter` | Insert newline |
 | `↑` / `↓` | Browse input history (↑ from empty field starts browsing) |
 | `Esc` | Clear input field; dismiss completion list; collapse command pane |
-| `Tab` | Move focus to conversation pane |
+| `Tab` | Fill selected completion into input (without executing) |
+| `Ctrl+N` | Toggle focus between input and conversation pane |
 | `Ctrl+C` | First press: cancel streaming. Within 500 ms again: quit |
 | `Ctrl+L` | Clear screen |
 
-### Conversation pane (enter with Tab, exit with Esc or Enter)
+### Conversation pane (enter with Ctrl+N, exit with Ctrl+N / Esc / Enter)
 
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Move focus between exchanges; scrolls viewport at boundaries |
-| `e` | Expand / collapse the focused entry (long entries only) |
+| `v` | Expand / collapse the focused entry (long entries only) |
 | `d` | Delete focused exchange — shows confirmation in command pane |
 | `s` | Speak focused exchange via TTS; press again to stop |
-| `Esc` / `Enter` / `Tab` | Return focus to input pane |
+| `Ctrl+N` / `Esc` / `Enter` | Return focus to input pane |
 
 ### Mouse
 
@@ -240,7 +241,8 @@ Two built-in themes selectable via `var ActiveTheme` in `tui/theme.go`:
 
 | Key | Action |
 |---|---|
-| `Esc` / `Enter` | Collapse command pane; return to input |
+| Any key | Dismiss command pane; return to input |
+| `Esc` / `Enter` | Dismiss command pane; return to input |
 | Type `yes` + `Enter` | Confirm a pending destructive action |
 | Any other input + `Enter` | Cancel a pending action |
 
@@ -301,6 +303,7 @@ Type `/` in the input pane to see completions. Commands can also be typed bare (
 | `/delete-last [n]` | Delete the last N exchanges from history (default 1) |
 | `/fold-all` | Expand or collapse all long entries (toggle) |
 | `/play-all` | Play all exchanges via TTS in sequence (toggle — stops if running) |
+| `/block-keys` | Show keys available when a block is focused (nav mode) |
 | `/help [group]` | Show all commands or commands for a group |
 | `/exit` | Exit lore |
 
@@ -310,7 +313,7 @@ Type `/` in the input pane to see completions. Commands can also be typed bare (
 // This is a personal note
 ```
 
-Any input starting with `//` is saved as a personal note to the current topic's history. Notes are visible in the conversation pane (shown in muted colour with a 📌 prefix) but are **never sent to the LLM** — they do not consume context tokens and do not influence replies.
+Any input starting with `//` is saved as a personal note to the current topic's history. Notes are visible in the conversation pane (shown in user-text colour with a 📌 prefix) but are **never sent to the LLM** — they do not consume context tokens and do not influence replies.
 
 ---
 
@@ -358,7 +361,7 @@ If **any** ref cannot be resolved, the entire send is aborted. An error is shown
 
 ### Display
 
-Assembled messages that exceed 512 characters are auto-folded in the conversation pane. Press `e` (in nav mode) to expand, or use `/fold-all` to toggle all long entries.
+Assembled messages that exceed 512 characters are auto-folded in the conversation pane. Press `v` (in nav mode) to expand/collapse, or use `/fold-all` to toggle all long entries.
 
 ### Works in headless mode
 
@@ -609,7 +612,7 @@ TTS is not invoked automatically in headless mode.
 }
 ```
 
-API key: `CLAUDE_API_KEY` (or `LORE_ANTHROPIC_API_KEY` to override).
+API key: `ANTHROPIC_API_KEY` (or `LORE_ANTHROPIC_API_KEY` to override).
 
 ### OpenAI
 

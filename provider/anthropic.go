@@ -32,10 +32,10 @@ type AnthropicProvider struct {
 func NewAnthropicProvider(model string, maxOutputTokens int) (*AnthropicProvider, error) {
 	key := strings.TrimSpace(os.Getenv("LORE_ANTHROPIC_API_KEY"))
 	if key == "" {
-		key = strings.TrimSpace(os.Getenv("CLAUDE_API_KEY"))
+		key = strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
 	}
 	if key == "" {
-		return nil, errors.New("LORE_ANTHROPIC_API_KEY or CLAUDE_API_KEY not set")
+		return nil, errors.New("LORE_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY not set")
 	}
 	if maxOutputTokens <= 0 {
 		maxOutputTokens = defaultMaxOutput

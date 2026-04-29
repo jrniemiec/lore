@@ -15,7 +15,8 @@ type keyMap struct {
 	ScrollUp      key.Binding
 	ScrollDown    key.Binding
 	Dismiss       key.Binding
-	FocusNext     key.Binding
+	FocusConv     key.Binding
+	FillCompletion key.Binding
 }
 
 var keys = keyMap{
@@ -63,8 +64,12 @@ var keys = keyMap{
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "back to input"),
 	),
-	FocusNext: key.NewBinding(
+	FocusConv: key.NewBinding(
+		key.WithKeys("ctrl+n"),
+		key.WithHelp("ctrl+n", "toggle focus: input ↔ conversation"),
+	),
+	FillCompletion: key.NewBinding(
 		key.WithKeys("tab"),
-		key.WithHelp("tab", "cycle focus: input ↔ conversation"),
+		key.WithHelp("tab", "fill selected completion into input"),
 	),
 }
