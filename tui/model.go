@@ -57,6 +57,9 @@ type Model struct {
 	cfg      config.Config
 	loreData string
 
+	// theme
+	themeMode string // "auto", "light", "dark"
+
 	// layout (set by WindowSizeMsg)
 	width  int
 	height int
@@ -174,6 +177,7 @@ func New(eng *engine.Engine, cfg config.Config, loreData string) Model {
 		ttsExIdx:      -1,
 		ttsRate:       200,
 		cursorVisible: true,
+		themeMode:     "auto",
 	}
 	m.loadUsageStats()
 	m.loadHistory()

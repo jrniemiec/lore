@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ var knownCommands = map[string]bool{
 	"profile-default": true, "profile-default-set": true,
 	"system": true, "system-set": true, "system-clear": true,
 	"config": true, "status": true, "stats": true,
+	"theme": true, "block-keys": true,
 }
 
 // looksLikeCommand returns true if the input (no leading /) has ≤ 2 words and
@@ -107,6 +109,10 @@ func handleCommand(m *Model, input string) cmdResult {
 	// --- nav ---
 	case "/block-keys":
 		return cmdBlockKeys()
+
+	// --- theme ---
+	case "/theme":
+		return cmdTheme(m, args)
 
 	// --- info ---
 	case "/config":
@@ -907,6 +913,7 @@ func allCompletions() []completionEntry {
 		{"/fold-all", "expand or collapse all long entries"},
 		{"/play-all", "play all entries via TTS (toggle)"},
 		{"/block-keys", "show keys available when a block is focused"},
+		{"/theme", "switch or show theme: light | dark | auto | options"},
 		{"/exit", "exit lore"},
 	}
 }
@@ -980,6 +987,9 @@ func cmdHelp(cmd string, args []string) cmdResult {
 		"nav": {
 			{"/block-keys", "show keys available when a block is focused"},
 		},
+		"theme": {
+			{"/theme [light|dark|auto|options]", "switch theme or show current"},
+		},
 	}
 
 	filesSection := []string{
@@ -1001,7 +1011,7 @@ func cmdHelp(cmd string, args []string) cmdResult {
 		"    summarize @notes.txt and cross-check with @~/docs/spec.md",
 	}
 
-	order := []string{"topic", "resource", "profile", "system", "info", "notes", "nav", "files"}
+	order := []string{"topic", "resource", "profile", "system", "info", "notes", "nav", "theme", "files"}
 
 	noun := ""
 	if len(args) > 0 {
@@ -1028,12 +1038,71 @@ func cmdHelp(cmd string, args []string) cmdResult {
 			}
 			lines = append(lines, renderGroup(g)...)
 		}
-	} else if noun == "files" || noun == "nav" || groups[noun] != nil {
+	} else if noun == "files" || noun == "nav" || noun == "theme" || groups[noun] != nil {
 		lines = renderGroup(noun)
 	} else {
 		return errResult(cmd+" "+noun, fmt.Sprintf("unknown group %q — available: %s", noun, strings.Join(order, "|")))
 	}
 	return okResult(cmd, lines)
+}
+
+// =============================================================================
+// theme command
+// =============================================================================
+
+func cmdTheme(m *Model, args []string) cmdResult {
+	if len(args) == 0 {
+		return okResult("/theme", []string{
+			fmt.Sprintf("current theme: %s", m.themeMode),
+			"",
+			"usage: /theme [light|dark|auto|options]",
+		})
+	}
+	sub := strings.ToLower(args[0])
+	switch sub {
+	case "light":
+		m.themeMode = "light"
+		ActiveTheme = Light
+		m.rebuildConvContent()
+		return okResult("/theme light", []string{"theme set to light"})
+	case "dark":
+		m.themeMode = "dark"
+		ActiveTheme = Nord
+		m.rebuildConvContent()
+		return okResult("/theme dark", []string{"theme set to dark (Nord)"})
+	case "auto":
+		m.themeMode = "auto"
+		DetectTheme()
+		m.rebuildConvContent()
+		return okResult("/theme auto", []string{fmt.Sprintf("theme set to auto (detected: %s)", detectedThemeName())})
+	case "options":
+		return okResult("/theme options", []string{
+			"available themes:",
+			"  light   — optimised for light-background iTerm2 profiles",
+			"  dark    — Nord palette (default dark theme)",
+			"  auto    — detect from terminal COLORFGBG (default)",
+		})
+	default:
+		return errResult("/theme "+sub, "unknown theme — use: light | dark | auto | options")
+	}
+}
+
+// detectedThemeName returns the name of the theme DetectTheme() would select.
+func detectedThemeName() string {
+	fgbg := os.Getenv("COLORFGBG")
+	if fgbg == "" {
+		return "dark"
+	}
+	parts := strings.SplitN(fgbg, ";", 2)
+	if len(parts) != 2 {
+		return "dark"
+	}
+	var bg int
+	fmt.Sscanf(parts[1], "%d", &bg)
+	if bg >= 8 {
+		return "light"
+	}
+	return "dark"
 }
 
 // =============================================================================

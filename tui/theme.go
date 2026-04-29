@@ -1,6 +1,12 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Theme holds foreground colors only. No background colors are set —
 // the terminal's own background is used throughout.
@@ -75,6 +81,56 @@ var ClaudeCode = Theme{
 	BoxBorder:  "#6598FF",
 }
 
+// Light is a theme for iTerm2 profiles with a light background.
+// All colors are chosen for readability against a white/light background.
+var Light = Theme{
+	TopBarText:    "#5A2D9A", // deep purple
+	UserText:      "#1A5E8A", // dark blue
+	AssistantText: "#2E2E2E", // near-black
+	InputPrompt:   "#2E2E2E", // near-black
+	Dimmed:        "#9A9A9A", // medium gray
+
+	Spinner:        "#1A7AB0", // dark cyan
+	ContextNormal:  "#2E2E2E",
+	ContextWarning: "#B8600A", // dark orange
+
+	StreamingText: "#5A2D9A", // deep purple
+	InputText:     "#2E2E2E", // near-black
+	StatusText:    "#2E2E2E",
+	BoxBorder:     "#1A7AB0", // dark cyan
+}
+
 // ActiveTheme is the theme used by all view functions.
-// Change this to switch the entire UI palette.
+// Set at startup based on terminal background detection.
 var ActiveTheme = Nord
+
+// ApplyTheme sets ActiveTheme from a mode string: "light", "dark", or "auto".
+// "auto" detects from COLORFGBG; unknown values fall back to auto.
+func ApplyTheme(mode string) {
+	switch strings.ToLower(mode) {
+	case "light":
+		ActiveTheme = Light
+	case "dark":
+		ActiveTheme = Nord
+	default: // "auto" or unset
+		DetectTheme()
+	}
+}
+
+// DetectTheme sets ActiveTheme based on the COLORFGBG environment variable.
+// iTerm2 sets COLORFGBG as "fg;bg". A background value >= 8 indicates a light theme.
+func DetectTheme() {
+	fgbg := os.Getenv("COLORFGBG")
+	if fgbg == "" {
+		return
+	}
+	parts := strings.SplitN(fgbg, ";", 2)
+	if len(parts) != 2 {
+		return
+	}
+	var bg int
+	fmt.Sscanf(parts[1], "%d", &bg)
+	if bg >= 8 {
+		ActiveTheme = Light
+	}
+}

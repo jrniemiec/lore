@@ -22,6 +22,7 @@ var version = "dev"
 var (
 	// mode
 	flagNoTUI bool
+	flagTheme string
 
 	// core
 	flagProfile string
@@ -80,6 +81,7 @@ func init() {
 	// mode
 	flag.BoolVar(&flagNoTUI, "no-tui", false, "run in headless mode (no TUI)")
 	flag.BoolVar(&flagNoTUI, "nw", false, "headless mode (short for --no-tui)")
+	flag.StringVar(&flagTheme, "theme", "auto", "color theme: light|dark|auto")
 
 	// core
 	flag.StringVar(&flagProfile, "profile", "", "provider profile code")
@@ -227,7 +229,7 @@ func run() int {
 			return 1
 		}
 	}
-	if err := tui.Start(e, cfg, loreData); err != nil {
+	if err := tui.Start(e, cfg, loreData, flagTheme); err != nil {
 		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
 		return 1
 	}

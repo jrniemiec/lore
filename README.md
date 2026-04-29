@@ -46,9 +46,7 @@
 
 ## Requirements
 
-**Terminal:** The TUI requires [iTerm2](https://iterm2.com) with a **dark background theme**. Other terminals (macOS Terminal.app, VS Code terminal, Emacs shell, vterm) are not supported for TUI mode. Use `--nw` (headless) in those environments.
-
-> Light theme support is planned for a future release.
+**Terminal:** The TUI requires [iTerm2](https://iterm2.com). Both dark and light background profiles are supported. Other terminals (macOS Terminal.app, VS Code terminal, Emacs shell, vterm) are not supported for TUI mode. Use `--nw` (headless) in those environments.
 
 **API keys:** Set in your environment before running:
 - Anthropic: `ANTHROPIC_API_KEY` (or `LORE_ANTHROPIC_API_KEY`)
@@ -199,10 +197,29 @@ Config lives at `~/.lore/config.json` (override with `LORE_HOME=/path/to/dir`).
 
 ### Themes
 
-Two built-in themes selectable via `var ActiveTheme` in `tui/theme.go`:
+Three built-in themes, selected automatically or via flag/command:
 
-- **Nord** (default) — cool blues based on the [Nord palette](https://www.nordtheme.com/)
-- **ClaudeCode** — near-black background, orange assistant text (Claude brand colour)
+| Theme | Description |
+|---|---|
+| `dark` | Nord palette — cool blues (default for dark backgrounds) |
+| `light` | Optimised for light-background iTerm2 profiles |
+| `auto` | Detects from `COLORFGBG` at startup (default) |
+
+**At launch:**
+```bash
+lore --theme light
+lore --theme dark
+lore --theme auto   # default
+```
+
+**Mid-session:**
+```
+/theme light
+/theme dark
+/theme auto
+/theme options     # list available themes
+/theme             # show current mode
+```
 
 ---
 
