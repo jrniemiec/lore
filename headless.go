@@ -180,6 +180,10 @@ func doChat(e *engine.Engine, prompt string) int {
 		fmt.Fprintf(os.Stderr, "[topic: %s  model: %s]\n", e.TopicName(), e.Profile().Model)
 	}
 
+	if flagChatLabels {
+		fmt.Printf("[you]: %s\n", prompt)
+	}
+
 	ctx := interruptContext()
 
 	color := ""
@@ -207,6 +211,9 @@ func doChat(e *engine.Engine, prompt string) int {
 			if color != "" {
 				fmt.Print(color)
 			}
+			if flagChatLabels {
+				fmt.Printf("[%s]: ", e.ProfileCode())
+			}
 			fmt.Println(response.String())
 			if color != "" {
 				fmt.Print("\x1b[0m")
@@ -216,6 +223,9 @@ func doChat(e *engine.Engine, prompt string) int {
 		// Stream tokens directly to stdout.
 		if color != "" {
 			fmt.Print(color)
+		}
+		if flagChatLabels {
+			fmt.Printf("[%s]: ", e.ProfileCode())
 		}
 		onDelta := func(delta string) error {
 			fmt.Print(delta)

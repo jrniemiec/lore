@@ -31,6 +31,7 @@ const (
 type exchange struct {
 	userMsg  core.Message
 	asstMsg  core.Message // empty while streaming or for notes
+	model    string       // model that produced the assistant reply
 	costUSD  float64
 	elapsed  time.Duration
 	complete bool // false while assistant reply is still streaming
@@ -58,7 +59,8 @@ type Model struct {
 	loreData string
 
 	// theme
-	themeMode string // "auto", "light", "dark"
+	themeMode  string // "auto", "light", "dark"
+	chatLabels bool   // prefix turns with [you]: / [profile]:
 
 	// layout (set by WindowSizeMsg)
 	width  int
@@ -89,6 +91,9 @@ type Model struct {
 	lastResult   *engine.ChatResult
 	topicStats   store.CallStats
 	sessionStats store.CallStats
+	// usageByTs maps unix-nanosecond timestamp → usage entry for the active topic.
+	// Used to match history exchanges to their exact logged cost/tokens.
+	usageByTs map[int64]store.UsageEntry
 
 	// bottom pane: command output
 	lastCmd     *cmdResult
@@ -209,17 +214,23 @@ func (m *Model) loadHistory() {
 				complete: true,
 			})
 		} else if msg.Role == core.RoleUser && i+1 < len(h.Msgs) && h.Msgs[i+1].Role == core.RoleAssistant {
-			m.exchanges = append(m.exchanges, exchange{
+			asst := h.Msgs[i+1]
+			ex := exchange{
 				userMsg:  msg,
-				asstMsg:  h.Msgs[i+1],
+				asstMsg:  asst,
+				model:    asst.Profile,
 				complete: true,
-			})
+			}
+			if entry, ok := m.usageByTs[asst.Time.UnixNano()]; ok {
+				ex.costUSD = entry.CostUSD
+			}
+			m.exchanges = append(m.exchanges, ex)
 			i++
 		}
 	}
 }
 
-// loadUsageStats reads the usage log into topicStats and sessionStats.
+// loadUsageStats reads the usage log into topicStats, sessionStats, and usageByTs.
 func (m *Model) loadUsageStats() {
 	logPath := store.UsageLogPath(m.loreData)
 	entries, err := store.ReadUsageLog(logPath)
@@ -230,6 +241,14 @@ func (m *Model) loadUsageStats() {
 	m.topicStats = agg.Total
 	aggAll := store.AggregateUsage(entries, "", 0)
 	m.sessionStats = aggAll.Total
+
+	// Build timestamp index for this topic so loadHistory can match exchanges.
+	m.usageByTs = make(map[int64]store.UsageEntry)
+	for _, e := range entries {
+		if e.Topic == m.eng.TopicName() {
+			m.usageByTs[e.Timestamp.UnixNano()] = e
+		}
+	}
 }
 
 // contextFillPct returns 0-100, or -1 if no limit is configured.
@@ -286,6 +305,9 @@ func (m *Model) inputVisualHeight() int {
 	}
 	if total < 1 {
 		total = 1
+	}
+	if total > 5 {
+		total = 5
 	}
 	return total
 }

@@ -135,13 +135,14 @@ func (e *Engine) Chat(ctx context.Context, prompt string, opts ChatOptions, onDe
 	}
 
 	if !opts.SkipHistory {
+		logTs := time.Now()
 		e.topic.History.Append(core.RoleUser, prompt)
-		e.topic.History.Append(core.RoleAssistant, response)
+		e.topic.History.AppendAssistant(response, e.profileCode, logTs)
 		if saveErr := e.st.SaveHistory(e.topicName, e.topic.History); saveErr != nil {
 			// non-fatal: best-effort
 			fmt.Fprintf(io.Discard, "save history: %v", saveErr)
 		}
-		e.appendUsageLog(usage)
+		e.appendUsageLog(usage, logTs)
 	}
 
 	return ChatResult{Usage: usage, Elapsed: elapsed}, nil
@@ -394,7 +395,7 @@ func (e *Engine) SetDefaultProfile(code string) error {
 
 // --- Usage logging --------------------------------------------------------
 
-func (e *Engine) appendUsageLog(u core.Usage) {
+func (e *Engine) appendUsageLog(u core.Usage, ts time.Time) {
 	logPath := store.UsageLogPath(e.loreData)
 	inPer1M, outPer1M, hasPricing := config.ExtractPricing(e.profile.Info)
 	var cost float64
@@ -402,7 +403,7 @@ func (e *Engine) appendUsageLog(u core.Usage) {
 		cost = config.CalcCost(u.InputTokens, u.OutputTokens, inPer1M, outPer1M)
 	}
 	entry := store.UsageEntry{
-		Timestamp:    time.Now(),
+		Timestamp:    ts,
 		Topic:        e.topicName,
 		Profile:      e.profileCode,
 		Model:        e.profile.Model,

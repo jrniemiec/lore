@@ -14,6 +14,7 @@ type Message struct {
 	Role    string    `json:"role"`
 	Content string    `json:"content"`
 	Time    time.Time `json:"time,omitempty"`
+	Profile string    `json:"profile,omitempty"` // profile code that produced this message (assistant only)
 }
 
 // History is the full append-only message log for a topic.
@@ -30,6 +31,18 @@ func (h *History) Append(role, content string) {
 		Role:    role,
 		Content: content,
 		Time:    time.Now(),
+	})
+}
+
+// AppendAssistant appends an assistant message with an explicit timestamp and
+// profile code. The caller must pass time.Now() captured once so that the
+// usage log entry can share the exact same timestamp for later matching.
+func (h *History) AppendAssistant(content, profile string, ts time.Time) {
+	h.Msgs = append(h.Msgs, Message{
+		Role:    RoleAssistant,
+		Content: content,
+		Time:    ts,
+		Profile: profile,
 	})
 }
 

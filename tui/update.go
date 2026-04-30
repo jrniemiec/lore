@@ -71,6 +71,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				last.complete = true
 				last.elapsed = msg.result.Elapsed
 				last.costUSD = calcExchangeCost(msg.result, m.eng)
+				last.model = m.eng.ProfileCode()
 			}
 			result := msg.result
 			m.lastResult = &result

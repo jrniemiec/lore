@@ -308,9 +308,16 @@ func renderConversation(m *Model) (string, []int) {
 				userText += "\n" + fg("#6B7A8D", fmt.Sprintf("... (%d more lines)", len(userLines)-5))
 			}
 			userRaw := wordWrap(compactLines(userText), wrapWidth)
-			userContent := addPrefix(fgLines(t.UserText, userRaw),
-				fg(t.AssistantText, "● "),
-				"  ")
+			var userContent string
+			if m.chatLabels {
+				userContent = addPrefix(fgLines(t.UserText, userRaw),
+					fgBold(t.UserText, "[you]: "),
+					"  ")
+			} else {
+				userContent = addPrefix(fgLines(t.UserText, userRaw),
+					fg(t.AssistantText, "● "),
+					"  ")
+			}
 
 			var asstRaw string
 			if ex.complete {
@@ -318,13 +325,27 @@ func renderConversation(m *Model) (string, []int) {
 			} else {
 				asstRaw = wordWrap(compactLines(m.streamBuf), wrapWidth)
 			}
-			asstContent := addPrefix(fgLines(t.AssistantText, asstRaw), "  ", "  ")
+			var asstContent string
+			if m.chatLabels {
+				profile := ex.model
+				if profile == "" {
+					profile = m.eng.ProfileCode()
+				}
+				asstContent = addPrefix(fgLines(t.AssistantText, asstRaw),
+					fgBold(t.AssistantText, "["+profile+"]: "),
+					"  ")
+			} else {
+				asstContent = addPrefix(fgLines(t.AssistantText, asstRaw), "  ", "  ")
+			}
 			turnContent = userContent + "\n" + asstContent
 		}
 
 		speaking := m.ttsExIdx == i
 		if focused || deleting || speaking {
 			left := fg(t.Dimmed, ex.userMsg.Time.Format("15:04"))
+			if ex.model != "" {
+				left += fg(t.Dimmed, "  "+ex.model)
+			}
 			if speaking {
 				left += fgBold(t.StreamingText, "  ♪")
 			}
@@ -447,7 +468,8 @@ func renderInputPane(m *Model) string {
 	}
 
 	curLogLine := m.input.Line()
-	curLogCol := m.input.LineInfo().ColumnOffset
+	curLineInfo := m.input.LineInfo()
+	curLogCol := curLineInfo.StartColumn + curLineInfo.ColumnOffset
 
 	logicalLines := strings.Split(m.input.Value(), "\n")
 	if len(logicalLines) == 0 {
@@ -511,7 +533,7 @@ func renderInputPane(m *Model) string {
 					}
 					var cursorSeq string
 					if m.cursorVisible {
-						cursorSeq = "\033[4m" + curChar + "\033[24m"
+						cursorSeq = "\033[7m" + curChar + "\033[27m"
 					} else {
 						cursorSeq = fg(t.InputText, curChar)
 						if curChar == " " {
