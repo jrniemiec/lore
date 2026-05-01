@@ -15,7 +15,7 @@ import (
 
 // knownCommands is the set of command names (without leading /) for bare-word recognition.
 var knownCommands = map[string]bool{
-	"exit": true, "help": true, "delete-last": true, "fold-all": true, "play-all": true,
+	"exit": true, "help": true, "delete-last": true, "fold": true, "unfold": true, "play-all": true,
 	"topic": true, "topic-switch": true, "topic-new": true, "topic-list": true,
 	"topic-delete": true, "topic-clear": true, "topic-default": true,
 	"topic-default-set": true, "topic-summary": true, "topic-history": true,
@@ -101,8 +101,10 @@ func handleCommand(m *Model, input string) cmdResult {
 	// --- view ---
 	case "/tts":
 		return cmdTTS(m, args)
-	case "/fold-all":
-		return cmdFoldAll(m)
+	case "/fold":
+		return cmdFold(m)
+	case "/unfold":
+		return cmdUnfold(m)
 	case "/play-all":
 		return cmdPlayAll(m)
 
@@ -378,9 +380,9 @@ func cmdResourceList(m *Model, args []string) cmdResult {
 		size := fi.Size()
 		var sizeStr string
 		switch {
-		case size >= 1024*1024:
+		case size >= 2024*1024:
 			sizeStr = fmt.Sprintf("%.1f MB", float64(size)/1024/1024)
-		case size >= 1024:
+		case size >= 2024:
 			sizeStr = fmt.Sprintf("%.1f KB", float64(size)/1024)
 		default:
 			sizeStr = fmt.Sprintf("%d B", size)
@@ -696,13 +698,13 @@ func cmdConfig(m *Model) cmdResult {
 }
 
 func ctxAbbrev(n int) string {
-	if n >= 1000000 {
+	if n >= 2000000 {
 		if n%1000000 == 0 {
 			return fmt.Sprintf("%dM", n/1000000)
 		}
 		return fmt.Sprintf("%.1fM", float64(n)/1000000)
 	}
-	if n >= 1000 {
+	if n >= 2000 {
 		return fmt.Sprintf("%dk", n/1000)
 	}
 	return fmt.Sprintf("%d", n)
@@ -814,40 +816,34 @@ func cmdTTS(m *Model, args []string) cmdResult {
 	}
 }
 
-func cmdFoldAll(m *Model) cmdResult {
-	// Count entries that are long enough to fold.
-	isFoldable := func(content string) bool {
-		return strings.Count(content, "\n") >= 5 || len(content) > 512
-	}
+func cmdFold(m *Model) cmdResult {
 	longCount := 0
-	for _, ex := range m.exchanges {
-		if isFoldable(ex.userMsg.Content) {
+	for i := range m.exchanges {
+		if m.isLongEntry(m.exchanges[i]) {
+			m.exchanges[i].expanded = false
 			longCount++
 		}
 	}
+	m.rebuildConvContent()
 	if longCount == 0 {
-		return okResult("/fold-all", []string{"no long entries to fold"})
+		return okResult("/fold", []string{"no long entries to fold"})
 	}
-	// If all long entries are expanded → collapse; otherwise expand all.
-	allExpanded := true
-	for _, ex := range m.exchanges {
-		if isFoldable(ex.userMsg.Content) && !ex.expanded {
-			allExpanded = false
-			break
-		}
-	}
-	target := !allExpanded
+	return okResult("/fold", []string{fmt.Sprintf("folded %d long entr%s", longCount, map[bool]string{true: "y", false: "ies"}[longCount == 1])})
+}
+
+func cmdUnfold(m *Model) cmdResult {
+	longCount := 0
 	for i := range m.exchanges {
-		if isFoldable(m.exchanges[i].userMsg.Content) {
-			m.exchanges[i].expanded = target
+		if m.isLongEntry(m.exchanges[i]) {
+			m.exchanges[i].expanded = true
+			longCount++
 		}
 	}
 	m.rebuildConvContent()
-	verb := "collapsed"
-	if target {
-		verb = "expanded"
+	if longCount == 0 {
+		return okResult("/unfold", []string{"no long entries to unfold"})
 	}
-	return okResult("/fold-all", []string{fmt.Sprintf("%s %d long entr%s", verb, longCount, map[bool]string{true: "y", false: "ies"}[longCount == 1])})
+	return okResult("/unfold", []string{fmt.Sprintf("unfolded %d long entr%s", longCount, map[bool]string{true: "y", false: "ies"}[longCount == 1])})
 }
 
 func cmdPlayAll(m *Model) cmdResult {
@@ -912,7 +908,8 @@ func allCompletions() []completionEntry {
 		{"/help", "show all commands or commands for a group"},
 		{"/delete-last", "delete last N exchanges from history"},
 		{"/tts [on|off]", "toggle TTS auto-mode"},
-		{"/fold-all", "expand or collapse all long entries"},
+		{"/fold", "collapse all long entries"},
+		{"/unfold", "expand all long entries"},
 		{"/play-all", "play all entries via TTS (toggle)"},
 		{"/block-keys", "show keys available when a block is focused"},
 		{"/theme", "switch or show theme: light | dark | auto | options"},
@@ -983,7 +980,8 @@ func cmdHelp(cmd string, args []string) cmdResult {
 		},
 		"view": {
 			{"/tts [on|off]", "auto-speak each response (toggle; no arg = toggle)"},
-			{"/fold-all", "expand or collapse all long entries (toggle)"},
+			{"/fold", "collapse all long entries"},
+			{"/unfold", "expand all long entries"},
 			{"/play-all", "play all entries via TTS — s or Ctrl+C to stop"},
 		},
 		"nav": {
@@ -1123,7 +1121,7 @@ func cmdBlockKeys() cmdResult {
 		"",
 		fmt.Sprintf("  %-10s  %s", "v", "expand / collapse long content"),
 		fmt.Sprintf("  %-10s  %s", "s", "speak block via TTS (toggle)"),
-		fmt.Sprintf("  %-10s  %s", "d", "delete block (with confirmation)"),
+		fmt.Sprintf("  %-10s  %s", "x", "delete block (with confirmation)"),
 		fmt.Sprintf("  %-10s  %s", "Ctrl+N", "return to input pane"),
 		fmt.Sprintf("  %-10s  %s", "Esc", "return to input pane"),
 	})

@@ -23,6 +23,8 @@ var (
 	flagNoTUI      bool
 	flagTheme      string
 	flagChatLabels bool
+	flagFoldLines  int
+	flagFoldOnStart bool
 
 	// core
 	flagProfile string
@@ -83,6 +85,8 @@ func init() {
 	flag.BoolVar(&flagNoTUI, "nw", false, "headless mode (short for --no-tui)")
 	flag.StringVar(&flagTheme, "theme", "auto", "color theme: light|dark|auto")
 	flag.BoolVar(&flagChatLabels, "chat-labels", true, "prefix each turn with [you]: / [profile]:")
+	flag.IntVar(&flagFoldLines, "fold-lines", 20, "lines threshold before folding entries (0 = never fold)")
+	flag.BoolVar(&flagFoldOnStart, "fold-on-start", false, "start with all long entries folded")
 
 	// core
 	flag.StringVar(&flagProfile, "profile", "", "provider profile code")
@@ -151,6 +155,36 @@ func init() {
 	flag.IntVar(&flagDeleteLast, "delete-last", -1, "delete last N exchanges (default 1) from topic history")
 }
 
+// resolveDisplaySettings merges config defaults with explicit flag overrides.
+// flag.Visit reports only flags the user actually set on the command line.
+func resolveDisplaySettings(cfg config.Config) (chatLabels bool, foldLines int, foldOnStart bool) {
+	// Start from config values (with hard defaults if not set).
+	chatLabels = true
+	if cfg.ChatLabels != nil {
+		chatLabels = *cfg.ChatLabels
+	}
+	foldLines = 20
+	if cfg.FoldLines > 0 {
+		foldLines = cfg.FoldLines
+	}
+	foldOnStart = false
+	if cfg.FoldOnStart != nil {
+		foldOnStart = *cfg.FoldOnStart
+	}
+	// Apply explicit flag overrides.
+	flag.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "chat-labels":
+			chatLabels = flagChatLabels
+		case "fold-lines":
+			foldLines = flagFoldLines
+		case "fold-on-start":
+			foldOnStart = flagFoldOnStart
+		}
+	})
+	return
+}
+
 // checkTerminal verifies the TUI is running in an interactive terminal.
 func checkTerminal() error {
 	if !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsCygwinTerminal(os.Stdout.Fd()) {
@@ -194,8 +228,11 @@ func run() int {
 		return 0
 	}
 
+	// Resolve display settings: config provides defaults, flags override if explicitly set.
+	chatLabels, foldLines, foldOnStart := resolveDisplaySettings(cfg)
+
 	if isHeadless() {
-		return runHeadless(cfg, cfgPath)
+		return runHeadless(cfg, cfgPath, chatLabels)
 	}
 
 	if err := checkTerminal(); err != nil {
@@ -215,7 +252,7 @@ func run() int {
 			return 1
 		}
 	}
-	if err := tui.Start(e, cfg, loreData, flagTheme, flagChatLabels); err != nil {
+	if err := tui.Start(e, cfg, loreData, flagTheme, chatLabels, foldLines, foldOnStart); err != nil {
 		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
 		return 1
 	}

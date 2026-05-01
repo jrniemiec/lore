@@ -19,7 +19,7 @@ import (
 	"github.com/jrniemiec/lore/store"
 )
 
-func runHeadless(cfg config.Config, cfgPath string) int {
+func runHeadless(cfg config.Config, cfgPath string, chatLabels bool) int {
 	loreData := config.LoreData()
 	st := store.New(cfg.TopicsRoot)
 	topicName := config.EffectiveTopic(cfg, flagTopic)
@@ -95,14 +95,14 @@ func runHeadless(cfg config.Config, cfgPath string) int {
 	}
 
 	// --- chat (needs provider via engine) ---
-	return runChat(cfg, cfgPath, loreData, topicName)
+	return runChat(cfg, cfgPath, loreData, topicName, chatLabels)
 }
 
 // =============================================================================
 // Chat
 // =============================================================================
 
-func runChat(cfg config.Config, cfgPath, loreData, topicName string) int {
+func runChat(cfg config.Config, cfgPath, loreData, topicName string, chatLabels bool) int {
 	prompt, err := resolvePrompt()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "prompt: %v\n", err)
@@ -123,7 +123,7 @@ func runChat(cfg config.Config, cfgPath, loreData, topicName string) int {
 	}
 
 	if flagAllProfiles {
-		return runAllProfiles(cfg, cfgPath, loreData, topicName, prompt)
+		return runAllProfiles(cfg, cfgPath, loreData, topicName, prompt, chatLabels)
 	}
 
 	e, err := engine.New(cfg, cfgPath, loreData, topicName, flagProfile)
@@ -138,10 +138,10 @@ func runChat(cfg config.Config, cfgPath, loreData, topicName string) int {
 		}
 	}
 
-	return doChat(e, prompt)
+	return doChat(e, prompt, chatLabels)
 }
 
-func runAllProfiles(cfg config.Config, cfgPath, loreData, topicName, prompt string) int {
+func runAllProfiles(cfg config.Config, cfgPath, loreData, topicName, prompt string, chatLabels bool) int {
 	exitCode := 0
 	for code := range cfg.Profiles {
 		fmt.Fprintf(os.Stderr, "\n=== profile: %s ===\n", code)
@@ -151,14 +151,14 @@ func runAllProfiles(cfg config.Config, cfgPath, loreData, topicName, prompt stri
 			exitCode = 1
 			continue
 		}
-		if c := doChat(e, prompt); c != 0 {
+		if c := doChat(e, prompt, chatLabels); c != 0 {
 			exitCode = c
 		}
 	}
 	return exitCode
 }
 
-func doChat(e *engine.Engine, prompt string) int {
+func doChat(e *engine.Engine, prompt string, chatLabels bool) int {
 	opts := engine.ChatOptions{
 		SkipHistory:      flagSkipHistory,
 		NoStream:         flagNoStream || flagJSON,
@@ -180,7 +180,7 @@ func doChat(e *engine.Engine, prompt string) int {
 		fmt.Fprintf(os.Stderr, "[topic: %s  model: %s]\n", e.TopicName(), e.Profile().Model)
 	}
 
-	if flagChatLabels {
+	if chatLabels {
 		fmt.Printf("[you]: %s\n", prompt)
 	}
 
@@ -211,7 +211,7 @@ func doChat(e *engine.Engine, prompt string) int {
 			if color != "" {
 				fmt.Print(color)
 			}
-			if flagChatLabels {
+			if chatLabels {
 				fmt.Printf("[%s]: ", e.ProfileCode())
 			}
 			fmt.Println(response.String())
@@ -224,7 +224,7 @@ func doChat(e *engine.Engine, prompt string) int {
 		if color != "" {
 			fmt.Print(color)
 		}
-		if flagChatLabels {
+		if chatLabels {
 			fmt.Printf("[%s]: ", e.ProfileCode())
 		}
 		onDelta := func(delta string) error {

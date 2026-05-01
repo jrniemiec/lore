@@ -40,6 +40,11 @@ type Config struct {
 	DefaultProfile string                     `json:"default_profile,omitempty"`
 	WindowMessages int                        `json:"window_messages,omitempty"`
 	Profiles       map[string]ProviderProfile `json:"profiles"`
+
+	// Display preferences
+	ChatLabels  *bool `json:"chat_labels,omitempty"`  // nil = use default (true)
+	FoldLines   int   `json:"fold_lines,omitempty"`   // 0 = use default (20)
+	FoldOnStart *bool `json:"fold_on_start,omitempty"` // nil = use default (false)
 }
 
 // LoreData returns the lore data directory ($LORE_DATA or ~/.lore).
@@ -116,6 +121,15 @@ func mergeConfig(dst *Config, src Config) {
 				dst.Profiles[code] = prof
 			}
 		}
+	}
+	if src.ChatLabels != nil {
+		dst.ChatLabels = src.ChatLabels
+	}
+	if src.FoldLines > 0 {
+		dst.FoldLines = src.FoldLines
+	}
+	if src.FoldOnStart != nil {
+		dst.FoldOnStart = src.FoldOnStart
 	}
 }
 

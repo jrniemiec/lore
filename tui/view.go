@@ -288,13 +288,17 @@ func renderConversation(m *Model) (string, []int) {
 			return strings.Join(lines, "\n")
 		}
 
+		fl := m.foldLines
+		if fl <= 0 {
+			fl = 0 // 0 means never fold — handled by never triggering the threshold
+		}
 		var turnContent string
 		if ex.isNote {
 			noteText := ex.userMsg.Content
 			noteLines := strings.Split(noteText, "\n")
-			if (len(noteLines) > 5 || len(noteText) > 512) && !ex.expanded {
-				noteText = strings.Join(noteLines[:5], "\n")
-				noteText += "\n" + fg(t.Dimmed, fmt.Sprintf("... (%d more lines)", len(noteLines)-5))
+			if fl > 0 && (len(noteLines) > fl || len(noteText) > 512) && !ex.expanded {
+				noteText = strings.Join(noteLines[:fl], "\n")
+				noteText += "\n" + fg(t.Dimmed, fmt.Sprintf("... (%d more lines)", len(noteLines)-fl))
 			}
 			noteRaw := wordWrap(compactLines(noteText), wrapWidth)
 			turnContent = addPrefix(fgLines(t.UserText, noteRaw),
@@ -303,9 +307,9 @@ func renderConversation(m *Model) (string, []int) {
 		} else {
 			userText := ex.userMsg.Content
 			userLines := strings.Split(userText, "\n")
-			if (len(userLines) > 5 || len(userText) > 512) && !ex.expanded {
-				userText = strings.Join(userLines[:5], "\n")
-				userText += "\n" + fg("#6B7A8D", fmt.Sprintf("... (%d more lines)", len(userLines)-5))
+			if fl > 0 && (len(userLines) > fl || len(userText) > 512) && !ex.expanded {
+				userText = strings.Join(userLines[:fl], "\n")
+				userText += "\n" + fg(t.Dimmed, fmt.Sprintf("... (%d more lines)", len(userLines)-fl))
 			}
 			userRaw := wordWrap(compactLines(userText), wrapWidth)
 			var userContent string
@@ -321,7 +325,13 @@ func renderConversation(m *Model) (string, []int) {
 
 			var asstRaw string
 			if ex.complete {
-				asstRaw = wordWrap(compactLines(ex.asstMsg.Content), wrapWidth)
+				asstText := ex.asstMsg.Content
+				asstLines := strings.Split(asstText, "\n")
+				if fl > 0 && len(asstLines) > fl && !ex.expanded {
+					asstText = strings.Join(asstLines[:fl], "\n")
+					asstText += "\n" + fg(t.Dimmed, fmt.Sprintf("... (%d more lines)", len(asstLines)-fl))
+				}
+				asstRaw = wordWrap(compactLines(asstText), wrapWidth)
 			} else {
 				asstRaw = wordWrap(compactLines(m.streamBuf), wrapWidth)
 			}
@@ -356,7 +366,7 @@ func renderConversation(m *Model) (string, []int) {
 				if ex.expanded {
 					expandHint = "v collapse"
 				}
-				hints := fg(t.Dimmed, expandHint+" · s speak · d delete")
+				hints := fg(t.Dimmed, expandHint+" · s speak · x delete")
 				innerW := m.width - 4
 				leftW := visibleWidth(left)
 				hintsW := visibleWidth(hints)

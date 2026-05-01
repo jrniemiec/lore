@@ -61,6 +61,8 @@ type Model struct {
 	// theme
 	themeMode  string // "auto", "light", "dark"
 	chatLabels bool   // prefix turns with [you]: / [profile]:
+	foldLines  int    // lines threshold before folding (0 = never)
+	foldOnStart bool  // start with long entries folded
 
 	// layout (set by WindowSizeMsg)
 	width  int
@@ -202,6 +204,17 @@ func spinnerTick() tea.Cmd {
 	})
 }
 
+// isLongEntry returns true if the exchange exceeds the fold threshold.
+func (m *Model) isLongEntry(ex exchange) bool {
+	fl := m.foldLines
+	if fl <= 0 {
+		return false
+	}
+	userLong := strings.Count(ex.userMsg.Content, "\n") >= fl || len(ex.userMsg.Content) > 512
+	asstLong := !ex.isNote && strings.Count(ex.asstMsg.Content, "\n") >= fl
+	return userLong || asstLong
+}
+
 // loadHistory populates exchanges from the engine's current topic history.
 func (m *Model) loadHistory() {
 	h := m.eng.Topic().History
@@ -209,9 +222,10 @@ func (m *Model) loadHistory() {
 		msg := h.Msgs[i]
 		if msg.Role == core.RoleNote {
 			m.exchanges = append(m.exchanges, exchange{
-				userMsg: msg,
-				isNote:  true,
+				userMsg:  msg,
+				isNote:   true,
 				complete: true,
+				expanded: !m.foldOnStart,
 			})
 		} else if msg.Role == core.RoleUser && i+1 < len(h.Msgs) && h.Msgs[i+1].Role == core.RoleAssistant {
 			asst := h.Msgs[i+1]
@@ -220,6 +234,7 @@ func (m *Model) loadHistory() {
 				asstMsg:  asst,
 				model:    asst.Profile,
 				complete: true,
+				expanded: !m.foldOnStart,
 			}
 			if entry, ok := m.usageByTs[asst.Time.UnixNano()]; ok {
 				ex.costUSD = entry.CostUSD

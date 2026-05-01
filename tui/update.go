@@ -134,7 +134,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			content := strings.ReplaceAll(string(msg.Runes), "\r\n", "\n")
 			content = strings.ReplaceAll(content, "\r", "\n")
 			lines := strings.Split(content, "\n")
-			if len(lines) > 10 || len([]rune(content)) > 256 {
+			if len(lines) > 20 || len([]rune(content)) > 256 {
 				pre := m.input.Value()
 				blob := pre
 				if blob != "" && !strings.HasSuffix(blob, "\n") {
@@ -356,6 +356,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								userMsg:  core.Message{Role: core.RoleNote, Content: text, Time: time.Now()},
 								isNote:   true,
 								complete: true,
+								expanded: true,
 							})
 							m.rebuildConvContent()
 						}
@@ -542,12 +543,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Batch(cmds...)
 				case "v":
 					ex := &m.exchanges[m.focusedExIdx]
-					if strings.Count(ex.userMsg.Content, "\n") >= 5 || len(ex.userMsg.Content) > 512 {
+					if m.isLongEntry(*ex) {
 						ex.expanded = !ex.expanded
 						m.rebuildConvContent()
 					}
 					return m, tea.Batch(cmds...)
-				case "d":
+				case "x":
 					if m.pendingAction == nil {
 						exIdx := m.focusedExIdx
 						eng := m.eng
@@ -676,6 +677,7 @@ func (m *Model) sendMessage() tea.Cmd {
 		},
 		complete: false,
 		isPasted: isPasted,
+		expanded: true,
 	})
 	m.streaming = true
 	m.streamBuf = ""

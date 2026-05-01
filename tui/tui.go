@@ -15,7 +15,7 @@ import (
 var programSend func(tea.Msg)
 
 // Start launches the TUI and blocks until the user quits.
-func Start(eng *engine.Engine, cfg config.Config, loreData string, theme string, chatLabels bool) error {
+func Start(eng *engine.Engine, cfg config.Config, loreData string, theme string, chatLabels bool, foldLines int, foldOnStart bool) error {
 	// Alternate scroll mode: converts mouse wheel events to cursor-key sequences
 	// inside alt-screen without enabling mouse reporting. This keeps text
 	// selection working normally (no pointer capture).
@@ -38,6 +38,8 @@ func Start(eng *engine.Engine, cfg config.Config, loreData string, theme string,
 	m := New(eng, cfg, loreData)
 	m.themeMode = theme
 	m.chatLabels = chatLabels
+	m.foldLines = foldLines
+	m.foldOnStart = foldOnStart
 
 	opts := []tea.ProgramOption{tea.WithAltScreen()}
 	// On Terminal.app, enable mouse cell motion to capture scroll events and
