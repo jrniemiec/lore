@@ -34,6 +34,8 @@
 - **File injection** — embed file content into any prompt with `@name`, `@./path`, `@~/path`, or `@/abs/path`; multiple refs per prompt
 - **Resources** — per-topic file library; managed with `/resource-add`, `/resource-list`, `/resource-remove`
 - **Exchange navigation** — `Ctrl+N` into the conversation, browse with arrows, expand/collapse, delete, speak
+- **Chat labels** — `[you]:` / `[profile]:` prefixes on each turn (default on); model tag shown in the focused block header
+- **Fold/unfold** — long responses are foldable per-entry (`v`) or in bulk (`/fold`, `/unfold`); threshold and startup state are configurable
 - **Text-to-speech** — `s` speaks any exchange; `/play-all` queues the whole conversation; `/tts on` auto-speaks every response
 - **Model override** — `-m <model>` at startup overrides the model within the active profile without creating a new profile entry
 - **Headless mode** — full CLI for scripting: pipe stdin, read from files, all admin ops as flags
@@ -146,6 +148,26 @@ Config lives at `~/.lore/config.json` (override with `LORE_HOME=/path/to/dir`).
 | `info.input_cost_per_1m` | cost per 1M input tokens (for display) |
 | `info.output_cost_per_1m` | cost per 1M output tokens (for display) |
 
+### Display preferences
+
+Optional top-level keys in `config.json`. CLI flags override these when explicitly set.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `chat_labels` | bool | `true` | Prefix each turn with `[you]:` / `[profile]:` |
+| `fold_lines` | int | `20` | Line count threshold before an entry is foldable (0 = never fold) |
+| `fold_on_start` | bool | `false` | Start with all long entries collapsed |
+
+```json
+{
+  "chat_labels": true,
+  "fold_lines": 20,
+  "fold_on_start": false
+}
+```
+
+Equivalent CLI flags: `--chat-labels`, `--fold-lines`, `--fold-on-start`.
+
 ### API keys
 
 | Provider | Primary env var | Override |
@@ -163,12 +185,12 @@ Config lives at `~/.lore/config.json` (override with `LORE_HOME=/path/to/dir`).
 │ lore │ topic: dev · model: haiku │ summarize · 84%               │
 ├──────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  ● Explain the Builder pattern.              [14:32]  · e to     │
-│    The Builder pattern separates object...            expand     │
+│  [you]: Explain the Builder pattern.         [14:32]  · v to     │
+│  [haiku]: The Builder pattern separates…              expand     │
 │                                                                  │
-│  ● Give me a Go example.                                         │
-│    ❄ streaming ●●●●●                                            │
-│    type Server struct { ... }                                    │
+│  [you]: Give me a Go example.                                    │
+│  [haiku]: ❄ streaming ●●●●●                                     │
+│           type Server struct { ... }                             │
 │                                                                  │
 ├──────────────────────────────────────────────────────────────────┤
 │ dev/haiku>                                                        │
@@ -183,7 +205,7 @@ Config lives at `~/.lore/config.json` (override with `LORE_HOME=/path/to/dir`).
 
 **Conversation pane** — scrollable. Each exchange is a user turn followed immediately by the assistant reply. One blank line separates exchanges. Tab into this pane to navigate exchanges with the arrow keys.
 
-**Input pane** — the prompt field. Shows `<topic>/<model>>` as a prefix. Grows vertically as you type. Type `/` for command completion.
+**Input pane** — the prompt field. Shows `<topic>/<model>>` as a prefix. Grows vertically as you type (up to 5 lines); cursor is shown with reverse video highlighting. Type `/` for command completion.
 
 **Status / command pane** — single line by default, showing the `[ #N ]` navigation indicator (when conversation pane is focused) and cumulative stats. Expands when a slash command produces output or a confirmation is required.
 
@@ -244,7 +266,7 @@ lore --theme auto   # default
 |---|---|
 | `↑` / `↓` | Move focus between exchanges; scrolls viewport at boundaries |
 | `v` | Expand / collapse the focused entry (long entries only) |
-| `d` | Delete focused exchange — shows confirmation in command pane |
+| `x` | Delete focused exchange — shows confirmation in command pane |
 | `s` | Speak focused exchange via TTS; press again to stop |
 | `Ctrl+N` / `Esc` / `Enter` | Return focus to input pane |
 
@@ -318,7 +340,8 @@ Type `/` in the input pane to see completions. Commands can also be typed bare (
 | `/status` | Show effective topic, profile, and lore home |
 | `/stats` | Show cumulative usage and cost stats |
 | `/delete-last [n]` | Delete the last N exchanges from history (default 1) |
-| `/fold-all` | Expand or collapse all long entries (toggle) |
+| `/fold` | Collapse all long entries |
+| `/unfold` | Expand all long entries |
 | `/play-all` | Play all exchanges via TTS in sequence (toggle — stops if running) |
 | `/block-keys` | Show keys available when a block is focused (nav mode) |
 | `/help [group]` | Show all commands or commands for a group |
@@ -378,7 +401,7 @@ If **any** ref cannot be resolved, the entire send is aborted. An error is shown
 
 ### Display
 
-Assembled messages that exceed 512 characters are auto-folded in the conversation pane. Press `v` (in nav mode) to expand/collapse, or use `/fold-all` to toggle all long entries.
+Assembled messages that exceed the fold threshold are auto-folded in the conversation pane. Press `v` (in nav mode) to expand/collapse a single entry, or use `/fold` / `/unfold` to collapse or expand all long entries at once.
 
 ### Works in headless mode
 
