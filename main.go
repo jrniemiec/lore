@@ -218,6 +218,7 @@ func run() int {
 		logLevel = slog.LevelInfo
 	}
 	clog.Init(filepath.Join(loreData, "lore.log"), logLevel)
+	clog.Info("lore started", "version", version, "log_level", logLevel.String())
 
 	bootstrapped, err := config.Bootstrap(loreData)
 	if err != nil {
