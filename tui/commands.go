@@ -772,7 +772,7 @@ func cmdConfig(m *Model) cmdResult {
 
 	llmBackend := cfg.LLMBackend
 	if llmBackend == "" {
-		llmBackend = "private"
+		llmBackend = "shared"
 	}
 	lines := []string{
 		row("config file", config.DefaultConfigPath()),

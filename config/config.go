@@ -53,9 +53,10 @@ type Config struct {
 	LLMBackend string `json:"llm_backend,omitempty"`
 }
 
-// UseSharedLLM reports whether the config requests the shared llm backend.
+// UseSharedLLM reports whether the shared llm backend is active.
+// Defaults to true; set llm_backend to "private" to use built-in providers.
 func (c Config) UseSharedLLM() bool {
-	return strings.EqualFold(strings.TrimSpace(c.LLMBackend), "shared")
+	return !strings.EqualFold(strings.TrimSpace(c.LLMBackend), "private")
 }
 
 // LoreData returns the lore data directory ($LORE_DATA or ~/.lore).
