@@ -32,6 +32,7 @@ var knownCommands = map[string]bool{
 	"system": true, "system-set": true, "system-clear": true,
 	"config": true, "status": true, "stats": true,
 	"theme": true, "block-keys": true,
+	"logs": true,
 }
 
 // looksLikeCommand returns true if the input (no leading /) has ≤ 2 words and
@@ -134,6 +135,8 @@ func handleCommand(m *Model, input string) cmdResult {
 		return cmdStatus(m)
 	case "/stats":
 		return cmdStats(m)
+	case "/logs":
+		return cmdLogs(m)
 
 	// --- help ---
 	case "/delete-last":
@@ -853,6 +856,52 @@ func cmdStats(m *Model) cmdResult {
 }
 
 // =============================================================================
+// logs
+// =============================================================================
+
+func cmdLogs(m *Model) cmdResult {
+	pid := os.Getpid()
+	sentinelPath := fmt.Sprintf("%s/lore-log-stop-%d", os.TempDir(), pid)
+
+	// Second call: close the viewer by writing the sentinel file.
+	if m.logViewerOpen {
+		_ = os.WriteFile(sentinelPath, nil, 0o644)
+		m.logViewerOpen = false
+		return cmdResult{input: "/logs", output: []string{"log viewer closed"}}
+	}
+
+	logPath := filepath.Join(m.loreData, "lore.log")
+	scriptPath := fmt.Sprintf("%s/lore-log-viewer-%d.sh", os.TempDir(), pid)
+
+	// Script: tail the log, exit when lore exits OR sentinel file appears; self-deletes on exit.
+	script := fmt.Sprintf(
+		"#!/bin/bash\ntrap 'rm -f \"%s\" \"%s\"' EXIT\ntail -n 200 -f '%s' & __t=$!\nwhile kill -0 %d 2>/dev/null && [ ! -f '%s' ]; do sleep 1; done\nkill $__t 2>/dev/null\n",
+		scriptPath, sentinelPath, logPath, pid, sentinelPath,
+	)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		return errResult("/logs", fmt.Sprintf("could not write log script: %v", err))
+	}
+
+	var appleScript string
+	switch ActiveTerminal {
+	case TermITerm2:
+		appleScript = fmt.Sprintf(
+			`tell application "iTerm2" to create window with default profile command "%s"`,
+			scriptPath,
+		)
+	default:
+		appleScript = fmt.Sprintf(
+			`tell application "Terminal" to do script "%s"`,
+			scriptPath,
+		)
+	}
+	go exec.Command("osascript", "-e", appleScript).Run()
+	m.logViewerOpen = true
+
+	return cmdResult{input: "/logs", output: []string{"log viewer opened in new window — /logs again to close"}}
+}
+
+// =============================================================================
 // delete-last
 // =============================================================================
 
@@ -1013,6 +1062,7 @@ func allCompletions() []completionEntry {
 		{"/config", "show resolved configuration"},
 		{"/status", "show effective defaults"},
 		{"/stats", "show usage and cost stats"},
+		{"/logs", "open log viewer in new terminal window (toggle)"},
 		{"/help", "show all commands or commands for a group"},
 		{"/delete-last", "delete last N exchanges from history"},
 		{"/tts [on|off]", "toggle TTS auto-mode"},
@@ -1117,6 +1167,7 @@ func cmdHelp(cmd string, args []string) cmdResult {
 			{"/config", "show resolved configuration"},
 			{"/status", "show effective defaults"},
 			{"/stats", "show usage and cost stats"},
+			{"/logs", "open log viewer in new terminal window (toggle)"},
 			{"/help [group]", "show all commands or commands for a group"},
 			{"/delete-last [n]", "delete last N exchanges from history (default 1)"},
 			{"/exit", "exit lore"},

@@ -159,6 +159,9 @@ type Model struct {
 	correcting      bool   // true while correction LLM call is in flight
 	correctionFlash string // non-empty: flash message shown in status bar
 
+	// log viewer
+	logViewerOpen bool // true while the external log tail window is open
+
 	// command completion (active when input starts with /)
 	completionItems []completionEntry // filtered list
 	completionIdx   int               // highlighted row (-1 = none)

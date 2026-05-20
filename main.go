@@ -4,12 +4,15 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/mattn/go-isatty"
 
 	"github.com/jrniemiec/lore/config"
 	"github.com/jrniemiec/lore/engine"
+	"github.com/jrniemiec/lore/internal/clog"
 	"github.com/jrniemiec/lore/tui"
 )
 
@@ -44,6 +47,9 @@ var (
 	flagAllProfiles bool
 	flagJSON        bool
 	flagForce       bool
+
+	// logging
+	flagLogLevel string
 
 	// display
 	flagSize     int
@@ -81,6 +87,7 @@ func init() {
 	flag.CommandLine.SetOutput(os.Stdout)
 
 	// mode
+	flag.StringVar(&flagLogLevel, "log-level", "", "log level: debug|info|warn|error (default info, env: LORE_LOG_LEVEL)")
 	flag.BoolVar(&flagNoTUI, "no-tui", false, "run in headless mode (no TUI)")
 	flag.BoolVar(&flagNoTUI, "nw", false, "headless mode (short for --no-tui)")
 	flag.StringVar(&flagTheme, "theme", "auto", "color theme: light|dark|auto")
@@ -200,6 +207,18 @@ func main() {
 
 func run() int {
 	loreData := config.LoreData()
+
+	// Init structured logging to ~/.lore/lore.log.
+	logLevelStr := flagLogLevel
+	if logLevelStr == "" {
+		logLevelStr = os.Getenv("LORE_LOG_LEVEL")
+	}
+	logLevel, ok := clog.ParseLevel(logLevelStr)
+	if !ok {
+		logLevel = slog.LevelInfo
+	}
+	clog.Init(filepath.Join(loreData, "lore.log"), logLevel)
+
 	bootstrapped, err := config.Bootstrap(loreData)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bootstrap: %v\n", err)
