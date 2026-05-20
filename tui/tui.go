@@ -39,7 +39,7 @@ func Start(eng *engine.Engine, cfg config.Config, loreData string, theme string,
 
 	clog.Infof("tui: start topic=%s profile=%s terminal=%s theme=%s", eng.TopicName(), eng.ProfileCode(), ActiveTerminal, theme)
 	if clog.IsNew() {
-		if b, err := json.Marshal(cfg); err == nil {
+		if b, err := json.MarshalIndent(cfg, "", "  "); err == nil {
 			clog.Raw("startup config", string(b))
 		}
 	}

@@ -808,7 +808,7 @@ func cmdConfig(m *Model) cmdResult {
 		}
 	}
 
-	if b, err := json.Marshal(cfg); err == nil {
+	if b, err := json.MarshalIndent(cfg, "", "  "); err == nil {
 		clog.Raw("/config", string(b))
 	}
 	return okResult("/config", lines)
