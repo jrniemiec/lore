@@ -313,7 +313,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Tab: fill selected param/completion into input, or toggle pane focus
 		case key.Matches(msg, keys.FillCompletion):
 			if len(m.paramItems) > 0 && m.paramIdx >= 0 {
-				cmd := strings.TrimSpace(m.input.Value())
+				val := m.input.Value()
+				cmd := val
+				if idx := strings.Index(val, " "); idx >= 0 {
+					cmd = val[:idx]
+				}
 				m.input.SetValue(cmd + " " + m.paramItems[m.paramIdx])
 				m.input.CursorEnd()
 				m.paramItems = nil
@@ -354,7 +358,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Enter: fill param, execute completion, confirm pending action, send, or dismiss
 		case key.Matches(msg, keys.Send):
 			if len(m.paramItems) > 0 && m.paramIdx >= 0 {
-				cmd := strings.TrimSpace(m.input.Value())
+				val := m.input.Value()
+				cmd := val
+				if idx := strings.Index(val, " "); idx >= 0 {
+					cmd = val[:idx]
+				}
 				m.input.SetValue(cmd + " " + m.paramItems[m.paramIdx])
 				m.input.CursorEnd()
 				m.paramItems = nil
