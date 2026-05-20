@@ -770,12 +770,17 @@ func cmdConfig(m *Model) cmdResult {
 		return fmt.Sprintf("  %-17s%s", label+":", value)
 	}
 
+	llmBackend := cfg.LLMBackend
+	if llmBackend == "" {
+		llmBackend = "private"
+	}
 	lines := []string{
 		row("config file", config.DefaultConfigPath()),
 		row("topics root", cfg.TopicsRoot),
 		row("default topic", orNone(cfg.DefaultTopic)),
 		row("default profile", orNone(cfg.DefaultProfile)),
 		row("window messages", fmt.Sprintf("%d", cfg.WindowMessages)),
+		row("llm backend", llmBackend),
 	}
 
 	if len(cfg.Profiles) > 0 {
