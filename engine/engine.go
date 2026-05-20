@@ -159,7 +159,7 @@ func (e *Engine) buildStrategy(ctx context.Context, opts ChatOptions) strategy.C
 		if !ok {
 			return strategy.New(strategy.StrategyTokenBudget, e.profile, e.cfg, e.topic.SystemPrompt, opts.BudgetOverride)
 		}
-		summProv, err := provider.New(summProfile)
+		summProv, err := provider.New(summProfile, e.cfg.UseSharedLLM())
 		if err != nil {
 			return strategy.New(strategy.StrategyTokenBudget, e.profile, e.cfg, e.topic.SystemPrompt, opts.BudgetOverride)
 		}
@@ -352,7 +352,7 @@ func (e *Engine) OverrideModel(model string) error {
 		return nil
 	}
 	e.profile.Model = model
-	prov, err := provider.New(e.profile)
+	prov, err := provider.New(e.profile, e.cfg.UseSharedLLM())
 	if err != nil {
 		return fmt.Errorf("init provider with model %q: %w", model, err)
 	}
@@ -366,7 +366,7 @@ func (e *Engine) SwitchProfile(code string) error {
 	if err != nil {
 		return err
 	}
-	prov, err := provider.New(prof)
+	prov, err := provider.New(prof, e.cfg.UseSharedLLM())
 	if err != nil {
 		return fmt.Errorf("init provider for profile %q: %w", resolvedCode, err)
 	}

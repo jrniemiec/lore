@@ -48,6 +48,14 @@ type Config struct {
 
 	// Input correction (Ctrl+R)
 	CorrectionProfile string `json:"correction_profile,omitempty"` // profile to use for spell/grammar correction; empty = use active profile
+
+	// LLM backend: "shared" uses github.com/jrniemiec/llm; empty or "private" uses built-in providers
+	LLMBackend string `json:"llm_backend,omitempty"`
+}
+
+// UseSharedLLM reports whether the config requests the shared llm backend.
+func (c Config) UseSharedLLM() bool {
+	return strings.EqualFold(strings.TrimSpace(c.LLMBackend), "shared")
 }
 
 // LoreData returns the lore data directory ($LORE_DATA or ~/.lore).
@@ -136,6 +144,9 @@ func mergeConfig(dst *Config, src Config) {
 	}
 	if strings.TrimSpace(src.CorrectionProfile) != "" {
 		dst.CorrectionProfile = src.CorrectionProfile
+	}
+	if strings.TrimSpace(src.LLMBackend) != "" {
+		dst.LLMBackend = src.LLMBackend
 	}
 }
 

@@ -1226,7 +1226,7 @@ func doCorrection(text string, notePrefix bool, cfg config.Config, activeProfile
 		if !ok {
 			return correctionDoneMsg{notePrefix: notePrefix, err: fmt.Errorf("correction profile %q not found in config", profileCode)}
 		}
-		prov, err := provider.New(prof)
+		prov, err := provider.New(prof, cfg.UseSharedLLM())
 		if err != nil {
 			return correctionDoneMsg{notePrefix: notePrefix, err: fmt.Errorf("correction: init provider: %w", err)}
 		}

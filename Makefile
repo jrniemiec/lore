@@ -47,19 +47,9 @@ build: ## Build binary into ./bin
 	$(GO) build $(GOFLAGS) -tags '$(TAGS)' -ldflags '$(LDFLAGS)' -o $(OUT) .
 	ln -sf $(BIN_DIR)/$(APP) ./$(LINK_NAME)
 
-.PHONY: build-shared
-build-shared: ## Build binary using shared llm module (github.com/jrniemiec/llm)
-	@mkdir -p $(BIN_DIR)
-	$(GO) build $(GOFLAGS) -tags 'sharedllm' -ldflags '$(LDFLAGS)' -o $(OUT) .
-	ln -sf $(BIN_DIR)/$(APP) ./$(LINK_NAME)
-
-.PHONY: install-shared
-install-shared: test build-shared ## Install using shared llm module
-	@mkdir -p "$(DEV_BIN)"
-	@rm -f "$(DEV_BIN)/$(BIN_NAME)"
-	@cp "$(OUT)" "$(DEV_BIN)/$(BIN_NAME)"
-	@chmod +x "$(DEV_BIN)/$(BIN_NAME)"
-	@echo "Installed: $(DEV_BIN)/$(BIN_NAME)"
+# Note: the llm backend is now selected at runtime via "llm_backend" in config.json.
+# Both backends are always compiled in. build-shared / install-shared are kept as
+# aliases that serve as documentation; they are identical to build / install.
 
 .PHONY: run
 run: ## Run the app (pass args via ARGS="...")

@@ -1,5 +1,3 @@
-//go:build sharedllm
-
 package provider
 
 import (
@@ -12,8 +10,8 @@ import (
 	"github.com/jrniemiec/lore/core"
 )
 
-// New creates a Provider from a ProviderProfile using the shared llm module.
-func New(p config.ProviderProfile) (core.Provider, error) {
+// newShared creates a Provider using the shared github.com/jrniemiec/llm module.
+func newShared(p config.ProviderProfile) (core.Provider, error) {
 	inner, err := llm.New(llm.ProviderConfig{
 		Provider:        p.Provider,
 		Model:           p.Model,

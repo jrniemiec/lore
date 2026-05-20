@@ -162,6 +162,7 @@ Optional top-level keys in `config.json`. CLI flags override these when explicit
 | `fold_lines` | int | `20` | Line count threshold before an entry is foldable (0 = never fold) |
 | `fold_on_start` | bool | `false` | Start with all long entries collapsed |
 | `correction_profile` | string | — | Profile used for `Ctrl+G` spell/grammar correction; falls back to the active profile if unset |
+| `llm_backend` | string | `private` | LLM backend: `private` (built-in providers) or `shared` (`github.com/jrniemiec/llm`) |
 
 ```json
 {
