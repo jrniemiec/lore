@@ -254,6 +254,21 @@ lore --theme auto   # default
 
 ---
 
+## Logging
+
+lore writes structured logs to `~/.lore/lore.log` (rotated at 50 MB, 2 backups).
+
+```bash
+lore --log-level debug   # verbose: chat, TTS, correction detail
+lore --log-level info    # default: startup, chat done, topic/profile switches
+lore --log-level warn    # warnings and errors only
+LORE_LOG_LEVEL=debug lore  # same via environment variable
+```
+
+Use `/logs` in the TUI to open a live `tail -f` view in a new terminal window. Run `/logs` again to close it.
+
+---
+
 ## Key bindings
 
 ### Input pane
@@ -268,6 +283,8 @@ lore --theme auto   # default
 | `Ctrl+T` | Open topic picker |
 | `Ctrl+P` | Open profile picker |
 | `Ctrl+G` | Send input text for spell/grammar correction (result replaces input) |
+| `Ctrl+O` | Prefill `/view ` — type or autocomplete a filesystem path to open in viewer |
+| `Ctrl+E` | Prefill `/edit ` — type or autocomplete a filesystem path to open in `$EDITOR` |
 | `Ctrl+C` | First press: cancel streaming. Within 500 ms again: quit |
 | `Ctrl+L` | Clear screen |
 
@@ -370,6 +387,15 @@ Type `/` in the input pane to see completions. Commands can also be typed bare (
 | `/system-set <text>` | Set the system prompt for the current topic |
 | `/system-clear` | Remove the system prompt |
 
+### File viewer / editor
+
+| Command | Description |
+|---|---|
+| `/view <path>` | Open any text file in the built-in viewer (`Ctrl+O` to prefill) |
+| `/edit <path>` | Open any file in `$EDITOR` (`Ctrl+E` to prefill) |
+
+Both commands support `~/`, `$ENV`, and relative paths. After typing `/view ` or `/edit `, the parameter picker shows filesystem completions — directories get a trailing `/` so you can Tab deeper. The viewer uses the same overlay as `/resource-view`.
+
 ### Info / utility
 
 | Command | Description |
@@ -377,6 +403,7 @@ Type `/` in the input pane to see completions. Commands can also be typed bare (
 | `/config` | Show resolved configuration (profiles, roots, defaults) |
 | `/status` | Show effective topic, profile, and lore home |
 | `/stats` | Show cumulative usage and cost stats |
+| `/logs` | Open `~/.lore/lore.log` tail in a new terminal window (toggle) |
 | `/delete-last [n]` | Delete the last N exchanges from history (default 1) |
 | `/fold` | Collapse all long entries |
 | `/unfold` | Expand all long entries |
