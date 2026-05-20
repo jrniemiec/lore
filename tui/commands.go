@@ -3,10 +3,15 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/jrniemiec/lore/config"
 	"github.com/jrniemiec/lore/core"
@@ -20,7 +25,7 @@ var knownCommands = map[string]bool{
 	"topic-delete": true, "topic-clear": true, "topic-default": true,
 	"topic-default-set": true, "topic-summary": true, "topic-history": true,
 	"topic-resource": true,
-	"resource-list": true, "resource-add": true, "resource-remove": true,
+	"resource-list": true, "resource-add": true, "resource-remove": true, "resource-view": true, "resource-edit": true, "resource-new": true,
 	"tts": true,
 	"profile": true, "profile-switch": true, "profile-list": true,
 	"profile-default": true, "profile-default-set": true,
@@ -77,6 +82,12 @@ func handleCommand(m *Model, input string) cmdResult {
 		return cmdResourceList(m, args)
 	case "/resource-remove":
 		return cmdResourceRemove(m, args)
+	case "/resource-view":
+		return cmdResourceOpen(m, args)
+	case "/resource-edit":
+		return cmdResourceEdit(m, args)
+	case "/resource-new":
+		return cmdResourceNew(m, args)
 
 	// --- profile ---
 	case "/profile":
@@ -409,6 +420,100 @@ func cmdResourceRemove(m *Model, args []string) cmdResult {
 		fmt.Sprintf("Resource %q will be permanently deleted from topic %q.", name, topicName),
 		"[yes] to confirm, other input or Esc to cancel:",
 	})
+}
+
+func cmdResourceOpen(m *Model, args []string) cmdResult {
+	if len(args) == 0 {
+		return errResult("/resource-view", "usage: /resource-view <name>")
+	}
+	name := args[0]
+	filePath := filepath.Join(m.eng.ResourceDir(), name)
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return errResult("/resource-view "+name, fmt.Sprintf("resource %q not found", name))
+	}
+	// Binary detection: non-UTF8 bytes in first 512 bytes.
+	check := data
+	if len(check) > 512 {
+		check = check[:512]
+	}
+	if !utf8.Valid(check) {
+		return errResult("/resource-view "+name, fmt.Sprintf("%q is not a text file", name))
+	}
+	// Truncate large files.
+	const maxBytes = 200 * 1024
+	truncated := false
+	if len(data) > maxBytes {
+		data = data[:maxBytes]
+		truncated = true
+	}
+	text := string(data)
+	if truncated {
+		text += "\n[file truncated at 200 KB]"
+	}
+	// Open overlay.
+	m.preFocus = m.focus
+	m.preFocusedExIdx = m.focusedExIdx
+	m.resourceLines = strings.Split(text, "\n")
+	m.resourceName = name
+	m.resourceCursor = 0
+	m.focus = paneResource
+	m.input.Blur()
+	m.syncLayout()
+	m.rebuildResourceContent()
+	return cmdResult{input: "/resource-view " + name, suppressCmdPane: true}
+}
+
+func cmdResourceEdit(m *Model, args []string) cmdResult {
+	if len(args) == 0 {
+		return errResult("/resource-edit", "usage: /resource-edit <name>")
+	}
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		return errResult("/resource-edit", "$EDITOR is not set — add 'export EDITOR=<path>' to your shell config")
+	}
+	name := args[0]
+	filePath := filepath.Join(m.eng.ResourceDir(), name)
+	if _, err := os.Stat(filePath); err != nil {
+		return errResult("/resource-edit "+name, fmt.Sprintf("resource %q not found", name))
+	}
+	editorCmd := exec.Command(editor, filePath)
+	return cmdResult{
+		input:           "/resource-edit " + name,
+		suppressCmdPane: true,
+		execCmd: tea.ExecProcess(editorCmd, func(err error) tea.Msg {
+			return resourceReloadMsg{name: name}
+		}),
+	}
+}
+
+func cmdResourceNew(m *Model, args []string) cmdResult {
+	if len(args) == 0 {
+		return errResult("/resource-new", "usage: /resource-new <name>")
+	}
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		return errResult("/resource-new", "$EDITOR is not set — add 'export EDITOR=<path>' to your shell config")
+	}
+	name := args[0]
+	filePath := filepath.Join(m.eng.ResourceDir(), name)
+	if _, err := os.Stat(filePath); err == nil {
+		return errResult("/resource-new "+name, fmt.Sprintf("resource %q already exists — use /resource-edit to edit it", name))
+	}
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		return errResult("/resource-new "+name, err.Error())
+	}
+	if err := os.WriteFile(filePath, nil, 0o644); err != nil {
+		return errResult("/resource-new "+name, err.Error())
+	}
+	editorCmd := exec.Command(editor, filePath)
+	return cmdResult{
+		input:           "/resource-new " + name,
+		suppressCmdPane: true,
+		execCmd: tea.ExecProcess(editorCmd, func(err error) tea.Msg {
+			return resourceReloadMsg{name: name}
+		}),
+	}
 }
 
 // =============================================================================
@@ -894,6 +999,9 @@ func allCompletions() []completionEntry {
 		{"/resource-add", "add resource file to current topic"},
 		{"/resource-list", "list resources for topic"},
 		{"/resource-remove", "remove a resource from topic"},
+		{"/resource-view", "open a resource file in the viewer"},
+		{"/resource-edit", "edit a resource file in $EDITOR"},
+		{"/resource-new", "create and edit a new resource file in $EDITOR"},
 		{"/profile", "show profile info"},
 		{"/profile-switch", "switch to named profile"},
 		{"/profile-list", "list all profiles"},
@@ -915,6 +1023,41 @@ func allCompletions() []completionEntry {
 		{"/theme", "switch or show theme: light | dark | auto | options"},
 		{"/exit", "exit lore"},
 	}
+}
+
+// contextualParams returns candidate parameter values for the given command,
+// or nil if no contextual completion is available for that command.
+func contextualParams(m *Model, cmd string) []string {
+	switch cmd {
+	case "/profile-switch", "/profile-default-set":
+		names := make([]string, 0, len(m.cfg.Profiles))
+		for name := range m.cfg.Profiles {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return names
+
+	case "/topic-switch", "/topic-delete", "/topic-default-set":
+		topics, err := m.eng.ListTopics()
+		if err != nil {
+			return nil
+		}
+		return topics
+
+	case "/resource-remove", "/resource-view", "/resource-edit":
+		// note: /resource-new does not use existing names for completion
+		st := store.New(m.cfg.TopicsRoot)
+		files, err := st.ListResources(m.eng.TopicName())
+		if err != nil {
+			return nil
+		}
+		names := make([]string, len(files))
+		for i, fi := range files {
+			names[i] = fi.Name()
+		}
+		return names
+	}
+	return nil
 }
 
 // filterCompletions returns entries whose command starts with the given prefix.
@@ -954,6 +1097,9 @@ func cmdHelp(cmd string, args []string) cmdResult {
 			{"/resource-list [topic]", "list resources for topic"},
 			{"/resource-add <file>", "copy file into topic resources"},
 			{"/resource-remove <name>", "delete a resource from topic"},
+			{"/resource-view <name>", "open a resource file in the viewer"},
+			{"/resource-edit <name>", "edit a resource file in $EDITOR"},
+			{"/resource-new <name>", "create and edit a new resource file in $EDITOR"},
 		},
 		"profile": {
 			{"/profile", "show current profile"},
@@ -1011,7 +1157,7 @@ func cmdHelp(cmd string, args []string) cmdResult {
 		"    summarize @notes.txt and cross-check with @~/docs/spec.md",
 	}
 
-	order := []string{"topic", "resource", "profile", "system", "info", "notes", "nav", "theme", "files"}
+	order := []string{"topic", "resource", "profile", "system", "info", "notes", "view", "nav", "theme", "files"}
 
 	noun := ""
 	if len(args) > 0 {

@@ -17,6 +17,8 @@ type keyMap struct {
 	Dismiss       key.Binding
 	FocusConv     key.Binding
 	FillCompletion key.Binding
+	CloseOverlay   key.Binding
+	CorrectInput   key.Binding // Ctrl+R: send input for spell/grammar correction
 }
 
 var keys = keyMap{
@@ -71,5 +73,13 @@ var keys = keyMap{
 	FillCompletion: key.NewBinding(
 		key.WithKeys("tab"),
 		key.WithHelp("tab", "fill selected completion into input"),
+	),
+	CloseOverlay: key.NewBinding(
+		key.WithKeys("ctrl+x"),
+		key.WithHelp("ctrl+x", "close overlay"),
+	),
+	CorrectInput: key.NewBinding(
+		key.WithKeys("ctrl+g"),
+		key.WithHelp("ctrl+g", "correct spelling/grammar"),
 	),
 }

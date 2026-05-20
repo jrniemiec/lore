@@ -25,6 +25,9 @@ const (
 	paneInput focusPane = iota
 	paneConv
 	paneCmd
+	paneResource
+	paneTopicPicker
+	paneProfilePicker
 )
 
 // exchange holds one complete user+assistant turn, or a standalone note.
@@ -40,8 +43,23 @@ type exchange struct {
 	expanded bool // true when pasted content is shown in full (in-memory only)
 }
 
+// resourceReloadMsg fires after an external editor exits, triggering a file reload.
+type resourceReloadMsg struct{ name string }
+
+// ttsPendingItem holds a sentence queued for streaming TTS playback.
+type ttsPendingItem struct {
+	text   string
+	exIdx  int
+}
+
 // Bubbletea message types.
 type streamDeltaMsg string
+type correctionDoneMsg struct {
+	text       string
+	notePrefix bool // true if original input started with "//"
+	err        error
+}
+type correctionFlashMsg struct{}
 type streamDoneMsg struct {
 	result engine.ChatResult
 	err    error
@@ -72,6 +90,15 @@ type Model struct {
 	conv  viewport.Model
 	input textarea.Model
 	focus focusPane
+
+	// resource overlay (active when focus == paneResource)
+	resourceLines    []string
+	resourceName     string
+	resourceCursor   int
+	resourceScroll   viewport.Model
+	resourceTTSQueue []int  // line indices still to be spoken (line-by-line playback)
+	preFocus         focusPane
+	preFocusedExIdx  int
 
 	// conversation
 	exchanges    []exchange
@@ -119,25 +146,51 @@ type Model struct {
 	pastedBlob string // full text to send; empty = not in paste mode
 
 	// TTS playback
-	ttsCmd   *exec.Cmd // non-nil while TTS is playing
-	ttsExIdx int       // exchange being spoken (-1 = none)
-	ttsQueue []int     // pending exchange indices for play-all
-	ttsAuto  bool      // auto-speak each response as it completes
+	ttsCmd              *exec.Cmd        // non-nil while TTS is playing
+	ttsExIdx            int              // exchange being spoken (-1 = none)
+	ttsQueue            []int            // pending exchange indices for play-all
+	ttsAuto             bool             // auto-speak each response as it completes
+	ttsPendingSentences []ttsPendingItem // sentence-streaming queue
+	streamSentenceBuf   string           // accumulates tokens until a sentence boundary
 	ttsRate  int       // words-per-minute for say(1) (default 200)
 	ttsGen   int       // incremented on each startTTS; stale ttsDoneMsgs are ignored
+
+	// input correction (Ctrl+R)
+	correcting      bool   // true while correction LLM call is in flight
+	correctionFlash string // non-empty: flash message shown in status bar
 
 	// command completion (active when input starts with /)
 	completionItems []completionEntry // filtered list
 	completionIdx   int               // highlighted row (-1 = none)
+
+	// contextual parameter picker (active when input is "/cmd " with no arg yet)
+	paramItems []string // candidate values (e.g. topic names, profile names)
+	paramIdx   int      // highlighted row (-1 = none)
+
+	// topic picker overlay (active when focus == paneTopicPicker)
+	topicPickerAll    []string // full unfiltered list
+	topicPickerItems  []string // filtered list (subset of topicPickerAll)
+	topicPickerFilter string   // current filter text
+	topicPickerIdx    int      // selected row within filtered list
+	topicPickerScroll int      // first visible row index within filtered list
+
+	// profile picker overlay (active when focus == paneProfilePicker)
+	profilePickerAll    []string // full unfiltered list
+	profilePickerItems  []string // filtered list
+	profilePickerFilter string   // current filter text
+	profilePickerIdx    int      // selected row within filtered list
+	profilePickerScroll int      // first visible row index within filtered list
 }
 
 // cmdResult holds one slash command invocation and its output.
 type cmdResult struct {
-	input    string
-	output   []string
-	warnLine string // if non-empty, rendered in red before output lines
-	isError  bool
-	quit     bool // if true, the app should exit
+	input           string
+	output          []string
+	warnLine        string // if non-empty, rendered in red before output lines
+	isError         bool
+	quit            bool    // if true, the app should exit
+	suppressCmdPane bool    // if true, skip opening the cmd pane (e.g. resource overlay)
+	execCmd         tea.Cmd // if non-nil, run after processing (e.g. tea.ExecProcess for editor)
 }
 
 // New creates a ready-to-run Model, loading existing history.
@@ -341,6 +394,17 @@ func (m *Model) cmdPaneHeight() int {
 	if len(m.completionItems) > 0 {
 		return 1 + len(m.completionItems) // header + one row per match
 	}
+	if len(m.paramItems) > 0 {
+		h := len(m.paramItems)
+		max := m.height * 30 / 100
+		if max < 3 {
+			max = 3
+		}
+		if h > max {
+			h = max
+		}
+		return h
+	}
 	if !m.cmdPaneOpen || m.lastCmd == nil {
 		return 1
 	}
@@ -356,17 +420,29 @@ func (m *Model) cmdPaneHeight() int {
 	return h
 }
 
+// pickerOverlayHeight returns the fixed line count used by both pickers.
+// 1 (title) + 1 (sep) + maxVisible (items) + 1 (sep) + 1 (count) + 1 (keys)
+func pickerOverlayHeight() int { return topicPickerMaxVisible + 5 }
+
 // syncLayout recalculates the conversation viewport height based on current
 // terminal size and textarea height. Call after resize or textarea height change.
 func (m *Model) syncLayout() {
 	// Layout (each value = number of terminal lines):
 	//   top bar:    2 (text + separator)
 	//   conv:       convH
-	//   input pane: 1 (separator) + textarea.Height()
-	//   bottom pane: 1 (separator) + cmdPaneHeight()
+	//   input pane: 1 (separator) + textarea.Height()  (hidden when picker open)
+	//   bottom pane: 1 (separator) + cmdPaneHeight()    (hidden when picker open)
+	//   picker:     pickerOverlayHeight()               (only when picker open)
+	pickerOpen := m.focus == paneTopicPicker || m.focus == paneProfilePicker
 	inputH := m.input.Height() + 1
 	bottomH := 1 + m.cmdPaneHeight()
-	convH := m.height - 2 - inputH - bottomH
+	var convH int
+	if pickerOpen {
+		// Picker replaces input+bottom panes; conv gets remaining space above it.
+		convH = m.height - 2 - pickerOverlayHeight()
+	} else {
+		convH = m.height - 2 - inputH - bottomH
+	}
 	if convH < 3 {
 		convH = 3
 	}
@@ -374,6 +450,13 @@ func (m *Model) syncLayout() {
 	m.conv.Height = convH
 	m.cmdScroll.Width = m.width
 	m.cmdScroll.Height = m.cmdPaneHeight()
+	// Resource overlay: full height minus top bar (2) and hint bar (2).
+	resourceH := m.height - 4
+	if resourceH < 1 {
+		resourceH = 1
+	}
+	m.resourceScroll.Width = m.width
+	m.resourceScroll.Height = resourceH
 }
 
 // rebuildConvContent re-renders all exchanges into the viewport.
@@ -384,6 +467,8 @@ func (m *Model) rebuildConvContent() {
 	m.conv.SetContent(content)
 	if m.focus == paneConv && m.focusedExIdx >= 0 && m.focusedExIdx < len(offsets) {
 		m.conv.SetYOffset(offsets[m.focusedExIdx])
+	} else if !m.userScrolled && m.ttsExIdx >= 0 && m.ttsExIdx < len(offsets) {
+		m.conv.SetYOffset(offsets[m.ttsExIdx])
 	} else if !m.userScrolled {
 		m.conv.GotoBottom()
 	}
@@ -418,11 +503,175 @@ func (m *Model) killTTS() {
 		m.ttsCmd = nil
 		m.ttsExIdx = -1
 		m.ttsQueue = nil
+		m.ttsPendingSentences = nil
+		m.streamSentenceBuf = ""
+		m.resourceTTSQueue = nil
 		// Kill the entire process group (say forks a child for audio synthesis).
 		if cmd.Process != nil {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		}
 	}
+}
+
+// killTTSAudio stops only the audio process without clearing any queues.
+// Used when restarting the current line at a new speed ([/] in resource view).
+func killTTSAudio(m *Model) {
+	if m.ttsCmd != nil {
+		cmd := m.ttsCmd
+		m.ttsCmd = nil
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}
+}
+
+// closeResourceOverlay tears down the resource overlay and restores previous focus.
+func (m *Model) closeResourceOverlay() {
+	m.focus = m.preFocus
+	m.focusedExIdx = m.preFocusedExIdx
+	m.resourceLines = nil
+	m.resourceName = ""
+	m.resourceCursor = 0
+	m.resourceTTSQueue = nil
+	if m.preFocus == paneInput {
+		m.input.Focus()
+	}
+	m.rebuildConvContent()
+	m.syncLayout()
+}
+
+// rebuildResourceContent re-renders the resource overlay lines into the viewport.
+func (m *Model) rebuildResourceContent() {
+	if len(m.resourceLines) == 0 {
+		return
+	}
+	m.resourceScroll.SetContent(renderResourceLines(m))
+	// Keep cursor visible.
+	vp := &m.resourceScroll
+	if m.resourceCursor < vp.YOffset {
+		vp.SetYOffset(m.resourceCursor)
+	} else if m.resourceCursor >= vp.YOffset+vp.Height {
+		vp.SetYOffset(m.resourceCursor - vp.Height + 1)
+	}
+}
+
+// openTopicPicker initialises and opens the topic picker overlay.
+func (m *Model) openTopicPicker() {
+	topics, _ := m.eng.ListTopics()
+	current := m.eng.TopicName()
+	// Put current topic first, rest sorted.
+	var all []string
+	all = append(all, current)
+	for _, t := range topics {
+		if t != current {
+			all = append(all, t)
+		}
+	}
+	m.topicPickerAll = all
+	m.topicPickerFilter = ""
+	m.topicPickerItems = all
+	m.topicPickerIdx = 0
+	m.topicPickerScroll = 0
+	m.preFocus = m.focus
+	m.preFocusedExIdx = m.focusedExIdx
+	m.focus = paneTopicPicker
+	m.syncLayout()
+	m.rebuildConvContent()
+}
+
+// closeTopicPicker tears down the topic picker and restores previous focus.
+func (m *Model) closeTopicPicker() {
+	m.focus = m.preFocus
+	m.focusedExIdx = m.preFocusedExIdx
+	m.topicPickerAll = nil
+	m.topicPickerItems = nil
+	m.topicPickerFilter = ""
+	m.topicPickerIdx = 0
+	m.topicPickerScroll = 0
+	if m.focus == paneInput {
+		m.input.Focus()
+	}
+	m.syncLayout()
+	m.rebuildConvContent()
+}
+
+// filterTopicPicker re-filters topicPickerItems from topicPickerAll using the current filter.
+func (m *Model) filterTopicPicker() {
+	f := strings.ToLower(m.topicPickerFilter)
+	if f == "" {
+		m.topicPickerItems = m.topicPickerAll
+	} else {
+		var out []string
+		for _, t := range m.topicPickerAll {
+			if strings.Contains(strings.ToLower(t), f) {
+				out = append(out, t)
+			}
+		}
+		m.topicPickerItems = out
+	}
+	m.topicPickerIdx = 0
+	m.topicPickerScroll = 0
+}
+
+// openProfilePicker initialises and opens the profile picker overlay.
+func (m *Model) openProfilePicker() {
+	current := m.eng.ProfileCode()
+	names := make([]string, 0, len(m.cfg.Profiles))
+	for name := range m.cfg.Profiles {
+		names = append(names, name)
+	}
+	// Sort alphabetically; put current first.
+	sortedNames := make([]string, 0, len(names))
+	sortedNames = append(sortedNames, current)
+	for _, n := range names {
+		if n != current {
+			sortedNames = append(sortedNames, n)
+		}
+	}
+	m.profilePickerAll = sortedNames
+	m.profilePickerFilter = ""
+	m.profilePickerItems = sortedNames
+	m.profilePickerIdx = 0
+	m.profilePickerScroll = 0
+	m.preFocus = m.focus
+	m.preFocusedExIdx = m.focusedExIdx
+	m.focus = paneProfilePicker
+	m.syncLayout()
+	m.rebuildConvContent()
+}
+
+// closeProfilePicker tears down the profile picker and restores previous focus.
+func (m *Model) closeProfilePicker() {
+	m.focus = m.preFocus
+	m.focusedExIdx = m.preFocusedExIdx
+	m.profilePickerAll = nil
+	m.profilePickerItems = nil
+	m.profilePickerFilter = ""
+	m.profilePickerIdx = 0
+	m.profilePickerScroll = 0
+	if m.focus == paneInput {
+		m.input.Focus()
+	}
+	m.syncLayout()
+	m.rebuildConvContent()
+}
+
+// filterProfilePicker re-filters profilePickerItems from profilePickerAll using the current filter.
+func (m *Model) filterProfilePicker() {
+	f := strings.ToLower(m.profilePickerFilter)
+	if f == "" {
+		m.profilePickerItems = m.profilePickerAll
+	} else {
+		var out []string
+		for _, p := range m.profilePickerAll {
+			if strings.Contains(strings.ToLower(p), f) {
+				out = append(out, p)
+			}
+		}
+		m.profilePickerItems = out
+	}
+	m.profilePickerIdx = 0
+	m.profilePickerScroll = 0
 }
 
 // scrollToBottom forces the viewport to the bottom and clears the userScrolled flag.

@@ -32,16 +32,19 @@
 - **Multiple profiles** — switch between providers and models within a session
 - **Three context strategies** — tail, token-budget, summarize (rolling LLM-generated summary)
 - **File injection** — embed file content into any prompt with `@name`, `@./path`, `@~/path`, or `@/abs/path`; multiple refs per prompt
-- **Resources** — per-topic file library; managed with `/resource-add`, `/resource-list`, `/resource-remove`
-- **Exchange navigation** — `Ctrl+N` into the conversation, browse with arrows, expand/collapse, delete, speak
+- **Resources** — per-topic file library; view and edit resources directly in the TUI with `/resource-view`, `/resource-edit`, `/resource-new`
+- **Topic picker** — `Ctrl+T` opens a searchable picker at the bottom of the screen; type to filter, `Enter` to switch
+- **Profile picker** — `Ctrl+P` opens the same searchable picker for profiles
+- **Exchange navigation** — Tab into the conversation, browse with arrows, expand/collapse, delete, speak
 - **Chat labels** — `[you]:` / `[profile]:` prefixes on each turn (default on); model tag shown in the focused block header
 - **Fold/unfold** — long responses are foldable per-entry (`v`) or in bulk (`/fold`, `/unfold`); threshold and startup state are configurable
-- **Text-to-speech** — `s` speaks any exchange; `/play-all` queues the whole conversation; `/tts on` auto-speaks every response
+- **Text-to-speech** — `s` speaks any exchange; `/play-all` queues the whole conversation; `/tts on` auto-speaks every response; sentence-by-sentence streaming playback starts before the response finishes; resource view speaks line-by-line with cursor tracking
+- **Input correction** — `Ctrl+R` sends the input field to an LLM for spell and grammar correction; result replaces the input in place
 - **Model override** — `-m <model>` at startup overrides the model within the active profile without creating a new profile entry
 - **Headless mode** — full CLI for scripting: pipe stdin, read from files, all admin ops as flags
 - **Personal notes** — `// text` saves a note to history that is never sent to the LLM
 - **Input history** — bash-style Up/Down browsing (in-memory, max 128 entries)
-- **Command completion** — type `/` to see completions; Tab fills selection into input, Enter executes it
+- **Command completion** — type `/` to see completions; Tab fills selection into input, Enter executes it; contextual parameter picker appears after `/cmd ` for commands that take names
 - **Single binary** — no runtime dependencies; providers and TTS are optional
 
 ---
@@ -102,6 +105,7 @@ Config lives at `~/.lore/config.json` (override with `LORE_HOME=/path/to/dir`).
   "default_topic": "dev",
   "default_profile": "haiku",
   "window_messages": 1024,
+  "correction_profile": "haiku",
   "profiles": {
     "haiku": {
       "provider": "anthropic",
@@ -157,12 +161,14 @@ Optional top-level keys in `config.json`. CLI flags override these when explicit
 | `chat_labels` | bool | `true` | Prefix each turn with `[you]:` / `[profile]:` |
 | `fold_lines` | int | `20` | Line count threshold before an entry is foldable (0 = never fold) |
 | `fold_on_start` | bool | `false` | Start with all long entries collapsed |
+| `correction_profile` | string | — | Profile used for `Ctrl+R` spell/grammar correction; falls back to the active profile if unset |
 
 ```json
 {
   "chat_labels": true,
   "fold_lines": 20,
-  "fold_on_start": false
+  "fold_on_start": false,
+  "correction_profile": "haiku"
 }
 ```
 
@@ -214,6 +220,8 @@ Equivalent CLI flags: `--chat-labels`, `--fold-lines`, `--fold-on-start`.
 - `❄` — pulsating (bold/dim) while waiting for the first streaming token
 - `❄ streaming ●●●●●` — brightness wave sweeping across the string while tokens arrive
 - `❄ speaking #N ●●●●●` — same wave while TTS is playing an exchange
+- `❄ correcting ●●●●●` — shown while `Ctrl+R` correction call is in flight
+- `✓ corrected` / `✓ no changes` / `✗ correction failed` — flash for 2 s after correction completes
 - `♪` — appended to the box header timestamp of the exchange currently being spoken
 - `[ #N ]` — shows which exchange is focused in nav mode
 
@@ -252,23 +260,49 @@ lore --theme auto   # default
 | Key | Action |
 |---|---|
 | `Enter` | Send message |
-| `Shift+Enter` | Insert newline |
+| `Ctrl+J` | Insert newline |
 | `↑` / `↓` | Browse input history (↑ from empty field starts browsing) |
-| `Esc` | Clear input field; dismiss completion list; collapse command pane |
-| `Tab` | Fill selected completion into input (without executing) |
-| `Ctrl+N` | Toggle focus between input and conversation pane |
+| `Esc` | Clear input field; dismiss completion/picker; collapse command pane |
+| `Tab` | Cycle focus between input and conversation pane (when no completion is open); fill selected completion into input |
+| `Ctrl+T` | Open topic picker |
+| `Ctrl+P` | Open profile picker |
+| `Ctrl+G` | Send input text for spell/grammar correction (result replaces input) |
 | `Ctrl+C` | First press: cancel streaming. Within 500 ms again: quit |
 | `Ctrl+L` | Clear screen |
 
-### Conversation pane (enter with Ctrl+N, exit with Ctrl+N / Esc / Enter)
+### Topic picker / Profile picker
+
+Both pickers open as an overlay at the bottom of the screen; the conversation remains visible above.
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Navigate list |
+| Type | Filter list in real-time |
+| `Enter` | Switch to selected topic / profile |
+| `Esc` / `Ctrl+X` / `Ctrl+T` (or `Ctrl+P`) | Close without switching |
+
+### Conversation pane (enter with Tab, exit with Tab / Esc)
 
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Move focus between exchanges; scrolls viewport at boundaries |
 | `v` | Expand / collapse the focused entry (long entries only) |
-| `x` | Delete focused exchange — shows confirmation in command pane |
+| `x` | Delete focused exchange immediately |
 | `s` | Speak focused exchange via TTS; press again to stop |
-| `Ctrl+N` / `Esc` / `Enter` | Return focus to input pane |
+| `Tab` / `Esc` | Return focus to input pane (Esc also stops TTS) |
+
+### Resource viewer (`/resource-view <name>`)
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Move cursor line by line |
+| `PgUp` / `PgDn` | Scroll half a page |
+| `g` / `G` | Jump to top / bottom |
+| `s` | Speak from cursor line downward, line by line; press again to stop |
+| `e` | Open resource in `$EDITOR` (reloads on exit) |
+| `Esc` | Stop TTS and jump to top |
+| `Ctrl+C` | Stop TTS (if playing); otherwise close overlay |
+| `Ctrl+X` | Stop TTS and close overlay |
 
 ### Mouse
 
@@ -289,7 +323,7 @@ lore --theme auto   # default
 
 ## Slash commands
 
-Type `/` in the input pane to see completions. Commands can also be typed bare (without `/`) if they are one or two words and the first word matches a known command name.
+Type `/` in the input pane to see completions. Commands can also be typed bare (without `/`) if they are one or two words and the first word matches a known command name. For commands that take a name argument, a contextual parameter picker appears after the command and a space — use `↑↓` or Tab to select.
 
 ### Topic
 
@@ -313,6 +347,9 @@ Type `/` in the input pane to see completions. Commands can also be typed bare (
 | `/resource-list [topic]` | List attached files — name, size, modification time |
 | `/resource-add <file>` | Copy a file into the current topic's `resources/` directory |
 | `/resource-remove <name>` | Remove a resource by filename (confirmation required) |
+| `/resource-view <name>` | Open a resource file in the built-in viewer |
+| `/resource-edit <name>` | Edit a resource file in `$EDITOR`; reloads on exit |
+| `/resource-new <name>` | Create a new empty resource file and open it in `$EDITOR` |
 
 ### Profile
 
@@ -353,7 +390,7 @@ Type `/` in the input pane to see completions. Commands can also be typed bare (
 // This is a personal note
 ```
 
-Any input starting with `//` is saved as a personal note to the current topic's history. Notes are visible in the conversation pane (shown in user-text colour with a 📌 prefix) but are **never sent to the LLM** — they do not consume context tokens and do not influence replies.
+Any input starting with `//` is saved as a personal note to the current topic's history. Notes are visible in the conversation pane (shown in user-text colour with a 📌 prefix) but are **never sent to the LLM** — they do not consume context tokens and do not influence replies. `Ctrl+R` correction works on notes too — the `//` prefix is preserved.
 
 ---
 
@@ -437,6 +474,9 @@ In the TUI:
 /resource-add ~/docs/api-spec.md
 /resource-list
 /resource-remove api-spec.md
+/resource-view api-spec.md             # open in built-in viewer
+/resource-edit api-spec.md             # open in $EDITOR
+/resource-new notes.md                 # create new file and open in $EDITOR
 ```
 
 After adding a file, reference it in any prompt:
@@ -444,6 +484,10 @@ After adding a file, reference it in any prompt:
 ```
 summarize the key points from @api-spec.md
 ```
+
+### Resource viewer
+
+`/resource-view <name>` opens a full-screen overlay showing the file content. Navigation is vim-style: `↑↓` line by line, `PgUp`/`PgDn` half-page, `g`/`G` top/bottom. Press `s` to speak the file from the current line downward (line by line, with cursor tracking). Press `e` to open the file in `$EDITOR` — on exit the viewer reloads the updated content. Press `Ctrl+X` or `Ctrl+C` (when not speaking) to close.
 
 ---
 
@@ -606,7 +650,7 @@ lore --strategy summarize --context-limit 80000 "prompt"
 
 ## Text-to-speech
 
-Optional. Requires `~/dev/bin/tts-play` on PATH.
+Optional. Requires macOS `say(1)` (built into macOS) or a custom `tts-play` script on PATH.
 
 ### TUI
 
@@ -629,14 +673,30 @@ Optional. Requires `~/dev/bin/tts-play` on PATH.
 
 When auto-mode is on and nothing is playing, the status bar shows a `♪ auto` badge. While speaking, it shows `❄ speaking #N ●●●●●` with a brightness wave animation. The active exchange's box header also shows `♪`.
 
-Content passed to `tts-play`:
-- Regular exchange: user message + blank line + assistant reply
-- Note: note text only
-- Raw content is passed as-is via stdin; `tts-play` handles any text cleansing
+**Streaming TTS** — when auto-mode is on, lore begins speaking the response sentence-by-sentence as it streams in, without waiting for the full reply. The conversation viewport scrolls to follow the speaking exchange.
+
+**Speed control** — while TTS is playing, press `[` to slow down or `]` to speed up (in steps of 20 wpm). The current rate is shown in the status bar.
+
+**Resource view TTS** — press `s` in the resource viewer to speak from the cursor line downward. Playback advances line by line with the cursor tracking the current line.
+
+Content passed to TTS is cleaned automatically: code blocks, inline code, URLs, markdown symbols, box-drawing characters, long dash runs, and diagram-like lines (fewer than 30% alphanumeric characters) are stripped before synthesis.
 
 ### Headless
 
 TTS is not invoked automatically in headless mode.
+
+---
+
+## Input correction
+
+Press `Ctrl+G` to send the current input field to an LLM for spell and grammar correction. The corrected text replaces the input in place. A 2-second flash message confirms the result (`✓ corrected`, `✓ no changes`, or `✗ correction failed`).
+
+- If the input starts with `//` (a note), the prefix is stripped before sending and restored afterward.
+- The profile used for correction is set by `correction_profile` in `config.json`. If unset, the currently active profile is used. A fast, cheap profile (e.g. `haiku`) is recommended.
+
+```json
+{ "correction_profile": "haiku" }
+```
 
 ---
 

@@ -3,7 +3,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/jrniemiec/lore/config"
 	"github.com/jrniemiec/lore/core"
 	"github.com/jrniemiec/lore/engine"
+	"github.com/jrniemiec/lore/provider"
 )
 
 // Update handles all incoming messages.
@@ -52,6 +55,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				last.asstMsg.Content = m.streamBuf
 			}
 		}
+		// Sentence-streaming TTS: detect complete sentences and start playback early.
+		if m.ttsAuto && len(m.exchanges) > 0 {
+			m.streamSentenceBuf += string(msg)
+			sentences, remaining := extractSentences(m.streamSentenceBuf)
+			m.streamSentenceBuf = remaining
+			exIdx := len(m.exchanges) - 1
+			for _, s := range sentences {
+				enqueueSentenceTTS(ttsStrip(s), exIdx, &m, &cmds)
+			}
+		}
 		m.rebuildConvContent()
 
 	// --- streaming done ---
@@ -83,11 +96,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessionStats.InputTokens += msg.result.Usage.InputTokens
 			m.sessionStats.OutputTokens += msg.result.Usage.OutputTokens
 			m.sessionStats.CostUSD += m.topicStats.CostUSD
-			// Auto-speak the completed exchange if TTS auto-mode is on.
-			if m.ttsAuto && m.ttsCmd == nil && len(m.exchanges) > 0 {
+			// Flush any remaining partial sentence from the stream buffer.
+			// If no sentence boundaries were found at all, remainder == full response.
+			if m.ttsAuto && len(m.exchanges) > 0 {
 				exIdx := len(m.exchanges) - 1
-				cmds = append(cmds, startTTS(ttsText(&m.exchanges[exIdx]), exIdx, &m))
+				remainder := ttsStrip(strings.TrimSpace(m.streamSentenceBuf))
+				if remainder != "" {
+					enqueueSentenceTTS(remainder, exIdx, &m, &cmds)
+				}
 			}
+			m.streamSentenceBuf = ""
 		}
 		m.streamBuf = ""
 		m.rebuildConvContent()
@@ -100,8 +118,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.ttsCmd = nil
 		m.ttsExIdx = -1
-		// Drain queue if play-all is active.
-		if len(m.ttsQueue) > 0 {
+		// Drain sentence-streaming queue first (higher priority than play-all).
+		if len(m.ttsPendingSentences) > 0 {
+			next := m.ttsPendingSentences[0]
+			m.ttsPendingSentences = m.ttsPendingSentences[1:]
+			cmds = append(cmds, startTTS(next.text, next.exIdx, &m))
+		} else if len(m.resourceTTSQueue) > 0 && m.focus == paneResource {
+			// Drain resource line-by-line queue.
+			next := m.resourceTTSQueue[0]
+			m.resourceTTSQueue = m.resourceTTSQueue[1:]
+			m.resourceCursor = next
+			m.rebuildResourceContent()
+			cmds = append(cmds, startTTS(ttsStrip(m.resourceLines[next]), -1, &m))
+		} else if len(m.ttsQueue) > 0 {
+			// Drain play-all queue.
 			next := m.ttsQueue[0]
 			m.ttsQueue = m.ttsQueue[1:]
 			if next < len(m.exchanges) {
@@ -128,6 +158,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// --- keyboard ---
 	case tea.KeyMsg:
+		// Resource overlay: handle all keys independently and return early.
+		if m.focus == paneResource {
+			cmds = append(cmds, m.handleResourceKey(msg)...)
+			return m, tea.Batch(cmds...)
+		}
+		// Topic picker overlay: handle all keys independently and return early.
+		if m.focus == paneTopicPicker {
+			cmds = append(cmds, m.handleTopicPickerKey(msg)...)
+			return m, tea.Batch(cmds...)
+		}
+		// Profile picker overlay: handle all keys independently and return early.
+		if m.focus == paneProfilePicker {
+			cmds = append(cmds, m.handleProfilePickerKey(msg)...)
+			return m, tea.Batch(cmds...)
+		}
+
 		// Bracketed paste: entire pasted content arrives as one KeyMsg with Paste=true.
 		if msg.Paste && m.focus == paneInput && !m.streaming && m.pendingAction == nil {
 			// Normalize \r\n and bare \r to \n (terminals paste with \r endings).
@@ -195,6 +241,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.ttsCmd = nil
 				m.ttsExIdx = -1
 				m.ttsQueue = nil
+				m.ttsPendingSentences = nil
+				m.streamSentenceBuf = ""
 				m.rebuildConvContent()
 				return m, nil
 			}
@@ -212,7 +260,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Esc: exit completion, cancel pending action, collapse cmd pane, or return focus to input
 		case key.Matches(msg, keys.Dismiss):
-			if len(m.completionItems) > 0 {
+			if len(m.paramItems) > 0 {
+				m.paramItems = nil
+				m.paramIdx = -1
+				m.syncLayout()
+			} else if len(m.completionItems) > 0 {
 				m.completionItems = nil
 				m.completionIdx = -1
 				m.syncLayout()
@@ -245,25 +297,65 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.historySaved = ""
 				m.syncLayout()
 			} else {
+				m.killTTS()
 				m.focus = paneInput
 				m.focusedExIdx = -1
 				m.input.Focus()
 				m.rebuildConvContent()
 			}
 
-		// Tab: fill selected completion into input without executing
+		// Tab: fill selected param/completion into input, or toggle pane focus
 		case key.Matches(msg, keys.FillCompletion):
-			if len(m.completionItems) > 0 && m.completionIdx >= 0 {
-				m.input.SetValue(m.completionItems[m.completionIdx].cmd + " ")
+			if len(m.paramItems) > 0 && m.paramIdx >= 0 {
+				cmd := strings.TrimSpace(m.input.Value())
+				m.input.SetValue(cmd + " " + m.paramItems[m.paramIdx])
+				m.input.CursorEnd()
+				m.paramItems = nil
+				m.paramIdx = -1
+				m.syncLayout()
+			} else if len(m.completionItems) > 0 && m.completionIdx >= 0 {
+				filled := m.completionItems[m.completionIdx].cmd + " "
+				m.input.SetValue(filled)
 				m.input.CursorEnd()
 				m.completionItems = nil
 				m.completionIdx = -1
+				// Immediately show param picker if this command supports it.
+				items := contextualParams(&m, strings.TrimSpace(filled))
+				m.paramItems = items
+				if len(items) > 0 {
+					m.paramIdx = 0
+				} else {
+					m.paramIdx = -1
+				}
 				m.syncLayout()
+			} else {
+				// No active completion — use Tab to toggle pane focus.
+				if m.focus == paneInput {
+					m.focus = paneConv
+					m.input.Blur()
+					if m.focusedExIdx < 0 && len(m.exchanges) > 0 {
+						m.focusedExIdx = len(m.exchanges) - 1
+					}
+					m.rebuildConvContent()
+				} else if m.focus == paneConv {
+					m.focus = paneInput
+					m.focusedExIdx = -1
+					m.input.Focus()
+					m.rebuildConvContent()
+				}
 			}
 
-		// Enter: execute completion, confirm pending action, send (input pane), or dismiss (conv pane)
+		// Enter: fill param, execute completion, confirm pending action, send, or dismiss
 		case key.Matches(msg, keys.Send):
-			if len(m.completionItems) > 0 && m.completionIdx >= 0 {
+			if len(m.paramItems) > 0 && m.paramIdx >= 0 {
+				cmd := strings.TrimSpace(m.input.Value())
+				m.input.SetValue(cmd + " " + m.paramItems[m.paramIdx])
+				m.input.CursorEnd()
+				m.paramItems = nil
+				m.paramIdx = -1
+				m.input.Focus()
+				m.syncLayout()
+			} else if len(m.completionItems) > 0 && m.completionIdx >= 0 {
 				selected := m.completionItems[m.completionIdx].cmd
 				m.completionItems = nil
 				m.completionIdx = -1
@@ -276,19 +368,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.killTTS()
 						return m, tea.Quit
 					}
-					m.lastCmd = &result
-					m.cmdPaneOpen = true
-					if result.isError {
-						m.focus = paneInput
-						m.input.Focus()
-					} else {
-						m.focus = paneCmd
-						m.input.Blur()
+					if result.execCmd != nil {
+						cmds = append(cmds, result.execCmd)
+					} else if !result.suppressCmdPane {
+						m.lastCmd = &result
+						m.cmdPaneOpen = true
+						if result.isError {
+							m.focus = paneInput
+							m.input.Focus()
+						} else {
+							m.focus = paneCmd
+							m.input.Blur()
+						}
+						m.rebuildConvContent()
+						m.cmdScroll.SetContent(renderCmdOutput(&m))
+						m.cmdScroll.GotoTop()
+						m.syncLayout()
 					}
-					m.rebuildConvContent()
-					m.cmdScroll.SetContent(renderCmdOutput(&m))
-					m.cmdScroll.GotoTop()
-					m.syncLayout()
 				}
 			} else if m.focus == paneCmd && m.pendingAction == nil {
 				m.cmdPaneOpen = false
@@ -372,19 +468,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.killTTS()
 							return m, tea.Quit
 						}
-						m.lastCmd = &result
-						m.cmdPaneOpen = true
 						m.input.Reset()
-						if result.isError {
-							m.focus = paneInput
-							m.input.Focus()
-						} else {
-							m.focus = paneCmd
-							m.input.Blur()
+						if result.execCmd != nil {
+							cmds = append(cmds, result.execCmd)
+						} else if !result.suppressCmdPane {
+							m.lastCmd = &result
+							m.cmdPaneOpen = true
+							if result.isError {
+								m.focus = paneInput
+								m.input.Focus()
+							} else {
+								m.focus = paneCmd
+								m.input.Blur()
+							}
+							m.syncLayout()
+							m.cmdScroll.SetContent(renderCmdOutput(&m))
+							m.cmdScroll.GotoTop()
 						}
-						m.syncLayout()
-						m.cmdScroll.SetContent(renderCmdOutput(&m))
-						m.cmdScroll.GotoTop()
 						// If /play-all queued entries, kick off playback now.
 						if m.ttsCmd == nil && len(m.ttsQueue) > 0 {
 							next := m.ttsQueue[0]
@@ -407,7 +507,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Arrow up/down: completion, history in input pane, scroll cmd pane, navigate conv pane, or scroll conv
 		case key.Matches(msg, keys.NavUp):
-			if len(m.completionItems) > 0 {
+			if len(m.paramItems) > 0 {
+				if m.paramIdx > 0 {
+					m.paramIdx--
+				}
+			} else if len(m.completionItems) > 0 {
 				if m.completionIdx > 0 {
 					m.completionIdx--
 				}
@@ -445,7 +549,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.NavDown):
-			if len(m.completionItems) > 0 {
+			if len(m.paramItems) > 0 {
+				if m.paramIdx < len(m.paramItems)-1 {
+					m.paramIdx++
+				}
+			} else if len(m.completionItems) > 0 {
 				if m.completionIdx < len(m.completionItems)-1 {
 					m.completionIdx++
 				}
@@ -517,11 +625,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rebuildConvContent()
 			}
 
-		// Ctrl+T / Ctrl+P: topic/profile switching (stub — popup in future)
+		// Ctrl+T: open topic picker overlay
 		case key.Matches(msg, keys.SwitchTopic):
-			// TODO: topic picker popup
+			m.openTopicPicker()
 		case key.Matches(msg, keys.SwitchProfile):
-			// TODO: profile picker popup
+			m.openProfilePicker()
+
+		case key.Matches(msg, keys.CorrectInput):
+			if !m.correcting && strings.TrimSpace(m.input.Value()) != "" {
+				m.correcting = true
+				raw := m.input.Value()
+				notePrefix := strings.HasPrefix(raw, "//")
+				text := raw
+				if notePrefix {
+					text = strings.TrimSpace(raw[2:])
+				}
+				cmds = append(cmds, doCorrection(text, notePrefix, m.cfg, m.eng.ProfileCode()))
+			}
 
 		default:
 			// v/d/s: nav mode actions — only when paneConv is focused.
@@ -534,6 +654,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.ttsCmd = nil
 						m.ttsExIdx = -1
 						m.ttsQueue = nil
+						m.ttsPendingSentences = nil
+						m.streamSentenceBuf = ""
 						m.rebuildConvContent()
 					} else {
 						exIdx := m.focusedExIdx
@@ -549,38 +671,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					return m, tea.Batch(cmds...)
 				case "x":
-					if m.pendingAction == nil {
-						exIdx := m.focusedExIdx
-						eng := m.eng
-						m.pendingAction = func() cmdResult {
-							if err := eng.DeleteAt(exIdx); err != nil {
-								return cmdResult{input: fmt.Sprintf("delete entry #%d", exIdx+1), output: []string{err.Error()}, isError: true}
-							}
-							return cmdResult{input: fmt.Sprintf("delete entry #%d", exIdx+1), output: []string{"deleted"}}
-						}
-						m.pendingPost = func(model *Model) {
-							model.exchanges = append(model.exchanges[:exIdx], model.exchanges[exIdx+1:]...)
-							if model.focusedExIdx >= len(model.exchanges) {
-								model.focusedExIdx = len(model.exchanges) - 1
-							}
-							if len(model.exchanges) == 0 {
-								model.focus = paneInput
-								model.focusedExIdx = -1
-								model.input.Focus()
-							}
-						}
-						m.lastCmd = &cmdResult{
-							input:    fmt.Sprintf("delete entry #%d", exIdx+1),
-							warnLine: fmt.Sprintf("Deleting entry #%d ...", exIdx+1),
-							output:   []string{"[yes] to confirm, other or Esc to cancel:"},
-						}
+					exIdx := m.focusedExIdx
+					if err := m.eng.DeleteAt(exIdx); err != nil {
+						m.lastCmd = &cmdResult{input: fmt.Sprintf("delete entry #%d", exIdx+1), output: []string{err.Error()}, isError: true}
 						m.cmdPaneOpen = true
-						m.focus = paneCmd
-						m.input.Blur()
+					} else {
+						m.exchanges = append(m.exchanges[:exIdx], m.exchanges[exIdx+1:]...)
+						if m.focusedExIdx >= len(m.exchanges) {
+							m.focusedExIdx = len(m.exchanges) - 1
+						}
+						if len(m.exchanges) == 0 {
+							m.focus = paneInput
+							m.focusedExIdx = -1
+							m.input.Focus()
+						}
 						m.rebuildConvContent()
 						m.syncLayout()
-						m.cmdScroll.SetContent(renderCmdOutput(&m))
-						m.cmdScroll.GotoTop()
 					}
 					return m, tea.Batch(cmds...)
 				}
@@ -612,9 +718,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else {
 						m.completionIdx = -1
 					}
+					m.paramItems = nil
+					m.paramIdx = -1
+				} else if strings.HasPrefix(val, "/") && strings.HasSuffix(val, " ") {
+					// "/cmd " with trailing space and no argument yet — show param picker.
+					cmd := strings.ToLower(strings.TrimSpace(val))
+					items := contextualParams(&m, cmd)
+					m.paramItems = items
+					if len(items) > 0 {
+						m.paramIdx = 0
+					} else {
+						m.paramIdx = -1
+					}
+					m.completionItems = nil
+					m.completionIdx = -1
 				} else {
 					m.completionItems = nil
 					m.completionIdx = -1
+					m.paramItems = nil
+					m.paramIdx = -1
 				}
 				m.syncLayout()
 				m.cursorVisible = true
@@ -632,6 +754,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+
+	case resourceReloadMsg:
+		filePath := filepath.Join(m.eng.ResourceDir(), msg.name)
+		data, err := os.ReadFile(filePath)
+		if err == nil && m.focus == paneResource && m.resourceName == msg.name {
+			text := string(data)
+			m.resourceLines = strings.Split(text, "\n")
+			if m.resourceCursor >= len(m.resourceLines) {
+				m.resourceCursor = len(m.resourceLines) - 1
+			}
+			m.rebuildResourceContent()
+		}
+
+	case correctionDoneMsg:
+		m.correcting = false
+		if msg.err == nil && msg.text != "" {
+			corrected := msg.text
+			if msg.notePrefix {
+				corrected = "// " + corrected
+			}
+			if corrected != m.input.Value() {
+				m.correctionFlash = "✓ corrected"
+			} else {
+				m.correctionFlash = "✓ no changes"
+			}
+			m.input.SetValue(corrected)
+			m.input.CursorEnd()
+		} else if msg.err != nil {
+			m.correctionFlash = "✗ correction failed"
+		}
+		cmds = append(cmds, tea.Tick(2*time.Second, func(time.Time) tea.Msg {
+			return correctionFlashMsg{}
+		}))
+
+	case correctionFlashMsg:
+		m.correctionFlash = ""
 	}
 
 	return m, tea.Batch(cmds...)
@@ -721,10 +879,85 @@ func ttsText(ex *exchange) string {
 
 func ttsStrip(s string) string { return core.TTSStrip(s) }
 
+// extractSentences splits s into complete sentences and a leftover remainder.
+// A sentence boundary is .!? followed by whitespace or end of string, with
+// two exceptions to avoid false splits:
+//   - '.' preceded by a digit (decimal: "3.14")
+//   - '.' preceded by a single uppercase letter (abbreviation: "Dr.", "U.S.")
+//
+// Sentences shorter than minSentenceLen runes are merged into the remainder.
+const minSentenceLen = 20
+
+func extractSentences(s string) (sentences []string, remainder string) {
+	runes := []rune(s)
+	n := len(runes)
+	start := 0
+
+	for i := 0; i < n; i++ {
+		ch := runes[i]
+		if ch != '.' && ch != '!' && ch != '?' {
+			continue
+		}
+		// For '.' check abbreviation/decimal exceptions.
+		if ch == '.' && i > 0 {
+			prev := runes[i-1]
+			if prev >= '0' && prev <= '9' {
+				continue // decimal number
+			}
+			if prev >= 'A' && prev <= 'Z' && (i < 2 || runes[i-2] == ' ' || runes[i-2] == '.') {
+				continue // single-letter abbreviation
+			}
+		}
+		// Consume trailing punctuation (e.g. "?!", "...")
+		end := i
+		for end+1 < n && (runes[end+1] == '.' || runes[end+1] == '!' || runes[end+1] == '?') {
+			end++
+		}
+		// Must be followed by whitespace or end of string.
+		if end+1 < n && runes[end+1] != ' ' && runes[end+1] != '\n' && runes[end+1] != '\t' {
+			i = end
+			continue
+		}
+		candidate := strings.TrimSpace(string(runes[start : end+1]))
+		if len([]rune(candidate)) >= minSentenceLen {
+			sentences = append(sentences, candidate)
+			i = end + 1
+			for i < n && (runes[i] == ' ' || runes[i] == '\n' || runes[i] == '\t') {
+				i++
+			}
+			start = i
+			i-- // loop will i++
+		}
+	}
+	remainder = string(runes[start:])
+	return
+}
+
+// enqueueSentenceTTS appends a sentence to the TTS pipeline.
+// If nothing is playing it starts immediately; otherwise it queues.
+func enqueueSentenceTTS(text string, exIdx int, m *Model, cmds *[]tea.Cmd) {
+	if text == "" {
+		return
+	}
+	if m.ttsCmd == nil && len(m.ttsPendingSentences) == 0 {
+		*cmds = append(*cmds, startTTS(text, exIdx, m))
+	} else {
+		m.ttsPendingSentences = append(m.ttsPendingSentences, ttsPendingItem{text: text, exIdx: exIdx})
+	}
+}
+
 // startTTS launches the TTS backend with the given text via stdin and returns a Cmd
 // that sends ttsDoneMsg when the process exits.
+// A per-call timeout is estimated from text length to guard against say(1) hangs.
 func startTTS(text string, exIdx int, m *Model) tea.Cmd {
-	cmd := exec.Command("say", "-r", fmt.Sprintf("%d", m.ttsRate))
+	// Estimate a generous timeout: ~5 chars/word, 3× safety factor, min 15s.
+	words := len([]rune(text))/5 + 1
+	secs := words * 60 / m.ttsRate * 3
+	if secs < 15 {
+		secs = 15
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(secs)*time.Second)
+	cmd := exec.CommandContext(ctx, "say", "-r", fmt.Sprintf("%d", m.ttsRate))
 	// Put the process in its own process group so killTTS() can kill the
 	// entire group (say forks a child for audio synthesis).
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -735,8 +968,255 @@ func startTTS(text string, exIdx int, m *Model) tea.Cmd {
 	m.ttsExIdx = exIdx
 	m.rebuildConvContent()
 	return func() tea.Msg {
+		defer cancel()
 		err := cmd.Run()
 		return ttsDoneMsg{err: err, gen: gen}
+	}
+}
+
+// handleResourceKey processes keyboard input when the resource overlay is active.
+func (m *Model) handleResourceKey(msg tea.KeyMsg) []tea.Cmd {
+	var cmds []tea.Cmd
+	switch {
+	case key.Matches(msg, keys.Cancel): // Ctrl+C
+		if m.ttsCmd != nil {
+			m.killTTS()
+			m.rebuildResourceContent()
+		} else {
+			m.closeResourceOverlay()
+		}
+
+	case key.Matches(msg, keys.CloseOverlay): // Ctrl+X
+		m.killTTS()
+		m.closeResourceOverlay()
+
+	case key.Matches(msg, keys.Dismiss): // Esc — stop TTS and go to top
+		if m.ttsCmd != nil {
+			m.killTTS()
+		}
+		m.resourceCursor = 0
+		m.resourceScroll.GotoTop()
+		m.rebuildResourceContent()
+
+	case msg.Type == tea.KeyRunes && string(msg.Runes) == "s":
+		if m.ttsCmd != nil {
+			m.killTTS()
+			m.resourceTTSQueue = nil
+			m.rebuildResourceContent()
+		} else {
+			// Build queue of non-empty line indices from cursor onward.
+			var queue []int
+			for i := m.resourceCursor; i < len(m.resourceLines); i++ {
+				if ttsStrip(m.resourceLines[i]) != "" {
+					queue = append(queue, i)
+				}
+			}
+			if len(queue) > 0 {
+				m.resourceTTSQueue = queue[1:]
+				m.resourceCursor = queue[0]
+				m.rebuildResourceContent()
+				cmds = append(cmds, startTTS(ttsStrip(m.resourceLines[queue[0]]), -1, m))
+			}
+		}
+
+	case msg.Type == tea.KeyRunes && string(msg.Runes) == "g":
+		m.resourceCursor = 0
+		m.resourceScroll.GotoTop()
+		m.rebuildResourceContent()
+
+	case msg.Type == tea.KeyRunes && string(msg.Runes) == "G":
+		m.resourceCursor = len(m.resourceLines) - 1
+		m.resourceScroll.GotoBottom()
+		m.rebuildResourceContent()
+
+	case key.Matches(msg, keys.NavUp):
+		if m.resourceCursor > 0 {
+			m.resourceCursor--
+			m.rebuildResourceContent()
+		}
+
+	case key.Matches(msg, keys.NavDown):
+		if m.resourceCursor < len(m.resourceLines)-1 {
+			m.resourceCursor++
+			m.rebuildResourceContent()
+		}
+
+	case key.Matches(msg, keys.ScrollUp):
+		step := m.resourceScroll.Height / 2
+		if step < 1 {
+			step = 1
+		}
+		m.resourceCursor -= step
+		if m.resourceCursor < 0 {
+			m.resourceCursor = 0
+		}
+		m.resourceScroll.HalfPageUp()
+		m.rebuildResourceContent()
+
+	case key.Matches(msg, keys.ScrollDown):
+		step := m.resourceScroll.Height / 2
+		if step < 1 {
+			step = 1
+		}
+		m.resourceCursor += step
+		if m.resourceCursor >= len(m.resourceLines) {
+			m.resourceCursor = len(m.resourceLines) - 1
+		}
+		m.resourceScroll.HalfPageDown()
+		m.rebuildResourceContent()
+
+	case msg.Type == tea.KeyRunes && string(msg.Runes) == "e":
+		editor := os.Getenv("EDITOR")
+		if editor != "" && m.resourceName != "" {
+			m.killTTS()
+			filePath := filepath.Join(m.eng.ResourceDir(), m.resourceName)
+			name := m.resourceName
+			editorCmd := exec.Command(editor, filePath)
+			cmds = append(cmds, tea.ExecProcess(editorCmd, func(err error) tea.Msg {
+				return resourceReloadMsg{name: name}
+			}))
+		}
+	}
+	return cmds
+}
+
+const topicPickerMaxVisible = 8
+
+// handleTopicPickerKey processes keyboard input when the topic picker overlay is active.
+func (m *Model) handleTopicPickerKey(msg tea.KeyMsg) []tea.Cmd {
+	var cmds []tea.Cmd
+	switch {
+	case key.Matches(msg, keys.Cancel), key.Matches(msg, keys.Dismiss), key.Matches(msg, keys.CloseOverlay):
+		m.closeTopicPicker()
+
+	case key.Matches(msg, keys.SwitchTopic): // Ctrl+T toggles the picker closed
+		m.closeTopicPicker()
+
+	case key.Matches(msg, keys.Send): // Enter — switch to selected topic
+		if len(m.topicPickerItems) > 0 {
+			name := m.topicPickerItems[m.topicPickerIdx]
+			m.closeTopicPicker()
+			res := cmdTopicSwitch(m, []string{name})
+			if !res.isError {
+				m.lastCmd = &res
+				m.cmdPaneOpen = false
+			}
+		}
+
+	case key.Matches(msg, keys.NavUp):
+		if m.topicPickerIdx > 0 {
+			m.topicPickerIdx--
+			if m.topicPickerIdx < m.topicPickerScroll {
+				m.topicPickerScroll = m.topicPickerIdx
+			}
+		}
+
+	case key.Matches(msg, keys.NavDown):
+		if m.topicPickerIdx < len(m.topicPickerItems)-1 {
+			m.topicPickerIdx++
+			if m.topicPickerIdx >= m.topicPickerScroll+topicPickerMaxVisible {
+				m.topicPickerScroll = m.topicPickerIdx - topicPickerMaxVisible + 1
+			}
+		}
+
+	case msg.Type == tea.KeyBackspace:
+		if len(m.topicPickerFilter) > 0 {
+			runes := []rune(m.topicPickerFilter)
+			m.topicPickerFilter = string(runes[:len(runes)-1])
+			m.filterTopicPicker()
+		}
+
+	case msg.Type == tea.KeyRunes:
+		m.topicPickerFilter += string(msg.Runes)
+		m.filterTopicPicker()
+	}
+	return cmds
+}
+
+// handleProfilePickerKey processes keyboard input when the profile picker overlay is active.
+func (m *Model) handleProfilePickerKey(msg tea.KeyMsg) []tea.Cmd {
+	var cmds []tea.Cmd
+	switch {
+	case key.Matches(msg, keys.Cancel), key.Matches(msg, keys.Dismiss), key.Matches(msg, keys.CloseOverlay):
+		m.closeProfilePicker()
+
+	case key.Matches(msg, keys.SwitchProfile): // Ctrl+P toggles the picker closed
+		m.closeProfilePicker()
+
+	case key.Matches(msg, keys.Send): // Enter — switch to selected profile
+		if len(m.profilePickerItems) > 0 {
+			name := m.profilePickerItems[m.profilePickerIdx]
+			m.closeProfilePicker()
+			res := cmdProfileSwitch(m, []string{name})
+			if !res.isError {
+				m.lastCmd = &res
+				m.cmdPaneOpen = false
+			}
+		}
+
+	case key.Matches(msg, keys.NavUp):
+		if m.profilePickerIdx > 0 {
+			m.profilePickerIdx--
+			if m.profilePickerIdx < m.profilePickerScroll {
+				m.profilePickerScroll = m.profilePickerIdx
+			}
+		}
+
+	case key.Matches(msg, keys.NavDown):
+		if m.profilePickerIdx < len(m.profilePickerItems)-1 {
+			m.profilePickerIdx++
+			if m.profilePickerIdx >= m.profilePickerScroll+topicPickerMaxVisible {
+				m.profilePickerScroll = m.profilePickerIdx - topicPickerMaxVisible + 1
+			}
+		}
+
+	case msg.Type == tea.KeyBackspace:
+		if len(m.profilePickerFilter) > 0 {
+			runes := []rune(m.profilePickerFilter)
+			m.profilePickerFilter = string(runes[:len(runes)-1])
+			m.filterProfilePicker()
+		}
+
+	case msg.Type == tea.KeyRunes:
+		m.profilePickerFilter += string(msg.Runes)
+		m.filterProfilePicker()
+	}
+	return cmds
+}
+
+// =============================================================================
+// Input correction (Ctrl+R)
+// =============================================================================
+
+const defaultCorrectionPrompt = "Correct the spelling and grammar of the following text. " +
+	"Return only the corrected text with no explanations, no quotes, and no additional commentary."
+
+// doCorrection sends the input text to the configured (or active) profile for
+// spell/grammar fixing. The result is returned as a correctionDoneMsg.
+func doCorrection(text string, notePrefix bool, cfg config.Config, activeProfileCode string) tea.Cmd {
+	return func() tea.Msg {
+		profileCode := cfg.CorrectionProfile
+		if profileCode == "" {
+			profileCode = activeProfileCode
+		}
+		prof, ok := cfg.Profiles[profileCode]
+		if !ok {
+			return correctionDoneMsg{notePrefix: notePrefix, err: fmt.Errorf("correction profile %q not found in config", profileCode)}
+		}
+		prov, err := provider.New(prof)
+		if err != nil {
+			return correctionDoneMsg{notePrefix: notePrefix, err: fmt.Errorf("correction: init provider: %w", err)}
+		}
+		msgs := []core.Message{
+			{Role: core.RoleUser, Content: text},
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		response, _, err := prov.Chat(ctx, defaultCorrectionPrompt, msgs)
+		if err != nil {
+			return correctionDoneMsg{notePrefix: notePrefix, err: fmt.Errorf("correction: %w", err)}
+		}
+		return correctionDoneMsg{text: strings.TrimSpace(response), notePrefix: notePrefix}
 	}
 }
 

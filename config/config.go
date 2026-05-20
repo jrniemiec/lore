@@ -45,6 +45,9 @@ type Config struct {
 	ChatLabels  *bool `json:"chat_labels,omitempty"`  // nil = use default (true)
 	FoldLines   int   `json:"fold_lines,omitempty"`   // 0 = use default (20)
 	FoldOnStart *bool `json:"fold_on_start,omitempty"` // nil = use default (false)
+
+	// Input correction (Ctrl+R)
+	CorrectionProfile string `json:"correction_profile,omitempty"` // profile to use for spell/grammar correction; empty = use active profile
 }
 
 // LoreData returns the lore data directory ($LORE_DATA or ~/.lore).
@@ -131,11 +134,35 @@ func mergeConfig(dst *Config, src Config) {
 	if src.FoldOnStart != nil {
 		dst.FoldOnStart = src.FoldOnStart
 	}
+	if strings.TrimSpace(src.CorrectionProfile) != "" {
+		dst.CorrectionProfile = src.CorrectionProfile
+	}
 }
 
 // SaveAtomic writes cfg to path atomically (temp file + rename).
+// Unknown top-level keys already present in the file (e.g. a "c2" section
+// added by a sibling tool) are preserved unchanged.
 func SaveAtomic(path string, cfg Config) error {
-	b, err := json.MarshalIndent(cfg, "", "  ")
+	// Seed the raw map from the existing file so unknown keys are preserved.
+	rawMap := make(map[string]json.RawMessage)
+	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
+		_ = json.Unmarshal(b, &rawMap) // best-effort; start fresh if corrupt
+	}
+
+	// Marshal cfg and merge its fields into rawMap, overwriting known keys.
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	var cfgFields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &cfgFields); err != nil {
+		return err
+	}
+	for k, v := range cfgFields {
+		rawMap[k] = v
+	}
+
+	out, err := json.MarshalIndent(rawMap, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -143,7 +170,7 @@ func SaveAtomic(path string, cfg Config) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0644); err != nil {
+	if err := os.WriteFile(tmp, out, 0644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
