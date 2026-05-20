@@ -66,8 +66,9 @@ type streamDoneMsg struct {
 }
 type spinnerTickMsg struct{}
 type ttsDoneMsg struct {
-	err error
-	gen int // generation counter; ignored if != model's current ttsGen
+	err     error
+	gen     int           // generation counter; ignored if != model's current ttsGen
+	elapsed time.Duration // how long the TTS process ran
 }
 
 // Model is the root Bubbletea application model.

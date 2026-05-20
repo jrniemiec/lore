@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -8,6 +9,7 @@ import (
 
 	"github.com/jrniemiec/lore/config"
 	"github.com/jrniemiec/lore/engine"
+	"github.com/jrniemiec/lore/internal/clog"
 )
 
 // programSend is set by Start() so streaming goroutines can send delta msgs
@@ -33,6 +35,13 @@ func Start(eng *engine.Engine, cfg config.Config, loreData string, theme string,
 	if ActiveTerminal == TermITerm2 {
 		fmt.Fprint(os.Stdout, "\033[?1007h")
 		defer fmt.Fprint(os.Stdout, "\033[?1007l")
+	}
+
+	clog.Infof("tui: start topic=%s profile=%s terminal=%s theme=%s", eng.TopicName(), eng.ProfileCode(), ActiveTerminal, theme)
+	if clog.IsNew() {
+		if b, err := json.Marshal(cfg); err == nil {
+			clog.Raw("startup config", string(b))
+		}
 	}
 
 	m := New(eng, cfg, loreData)

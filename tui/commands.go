@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/jrniemiec/lore/config"
 	"github.com/jrniemiec/lore/core"
+	"github.com/jrniemiec/lore/internal/clog"
 	"github.com/jrniemiec/lore/store"
 )
 
@@ -200,9 +202,11 @@ func cmdTopicSwitch(m *Model, args []string) cmdResult {
 		return errResult("/topic-switch", "usage: /topic-switch <name>")
 	}
 	name := args[0]
+	prev := m.eng.TopicName()
 	if err := m.eng.SwitchTopic(name); err != nil {
 		return errResult("/topic-switch "+name, err.Error())
 	}
+	clog.Infof("topic: switch %q → %q", prev, name)
 	m.exchanges = nil
 	m.loadHistory()
 	m.rebuildConvContent()
@@ -576,9 +580,11 @@ func cmdProfileSwitch(m *Model, args []string) cmdResult {
 		return errResult("/profile-switch", "usage: /profile-switch <name>")
 	}
 	name := args[0]
+	prev := m.eng.ProfileCode()
 	if err := m.eng.SwitchProfile(name); err != nil {
 		return errResult("/profile-switch "+name, err.Error())
 	}
+	clog.Infof("profile: switch %q → %q", prev, name)
 	m.cfg = m.eng.Config()
 	return okResult("/profile-switch "+name, []string{fmt.Sprintf("switched to profile %q", name)})
 }
@@ -802,6 +808,9 @@ func cmdConfig(m *Model) cmdResult {
 		}
 	}
 
+	if b, err := json.Marshal(cfg); err == nil {
+		clog.Raw("/config", string(b))
+	}
 	return okResult("/config", lines)
 }
 

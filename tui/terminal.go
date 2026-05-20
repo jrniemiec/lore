@@ -23,6 +23,25 @@ const (
 	TermWezTerm          // WezTerm
 )
 
+func (t Terminal) String() string {
+	switch t {
+	case TermITerm2:
+		return "iTerm2"
+	case TermApple:
+		return "Terminal.app"
+	case TermKitty:
+		return "Kitty"
+	case TermVSCode:
+		return "VSCode"
+	case TermAlacritty:
+		return "Alacritty"
+	case TermWezTerm:
+		return "WezTerm"
+	default:
+		return "unknown"
+	}
+}
+
 // ActiveTerminal is detected once at startup by DetectTerminal.
 var ActiveTerminal = TermUnknown
 

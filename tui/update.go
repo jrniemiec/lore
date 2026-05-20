@@ -16,6 +16,7 @@ import (
 	"github.com/jrniemiec/lore/config"
 	"github.com/jrniemiec/lore/core"
 	"github.com/jrniemiec/lore/engine"
+	"github.com/jrniemiec/lore/internal/clog"
 	"github.com/jrniemiec/lore/provider"
 )
 
@@ -72,6 +73,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streaming = false
 		m.cancelStream = nil
 		if msg.err != nil {
+			clog.Errorf("chat: error topic=%s profile=%s err=%v", m.eng.TopicName(), m.eng.ProfileCode(), msg.err)
 			// Show error as a synthetic assistant message
 			if len(m.exchanges) > 0 {
 				last := &m.exchanges[len(m.exchanges)-1]
@@ -86,6 +88,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				last.costUSD = calcExchangeCost(msg.result, m.eng)
 				last.model = m.eng.ProfileCode()
 			}
+			clog.Infof("chat: done topic=%s profile=%s in=%d out=%d cost=%.4f elapsed=%s",
+				m.eng.TopicName(), m.eng.ProfileCode(),
+				msg.result.Usage.InputTokens, msg.result.Usage.OutputTokens,
+				calcExchangeCost(msg.result, m.eng), msg.result.Elapsed.Round(time.Millisecond))
 			result := msg.result
 			m.lastResult = &result
 			m.topicStats.Calls++
@@ -776,12 +782,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if corrected != m.input.Value() {
 				m.correctionFlash = "✓ corrected"
+				clog.Debugf("correction: done changed=true")
 			} else {
 				m.correctionFlash = "✓ no changes"
+				clog.Debugf("correction: done changed=false")
 			}
 			m.input.SetValue(corrected)
 			m.input.CursorEnd()
 		} else if msg.err != nil {
+			clog.Errorf("correction: err=%v", msg.err)
 			m.correctionFlash = "✗ correction failed"
 		}
 		cmds = append(cmds, tea.Tick(2*time.Second, func(time.Time) tea.Msg {
@@ -828,6 +837,11 @@ func (m *Model) sendMessage() tea.Cmd {
 	m.input.SetHeight(1)
 	m.input.Blur()
 
+	preview := prompt
+	if len([]rune(preview)) > 80 {
+		preview = string([]rune(preview)[:80]) + "…"
+	}
+	clog.Infof("chat: send topic=%s profile=%s chars=%d %q", m.eng.TopicName(), m.eng.ProfileCode(), len(prompt), preview)
 	m.exchanges = append(m.exchanges, exchange{
 		userMsg: core.Message{
 			Role:    core.RoleUser,
@@ -967,10 +981,18 @@ func startTTS(text string, exIdx int, m *Model) tea.Cmd {
 	m.ttsCmd = cmd
 	m.ttsExIdx = exIdx
 	m.rebuildConvContent()
+	clog.Debugf("tts: start gen=%d exIdx=%d words~%d rate=%d timeout=%ds", gen, exIdx, words, m.ttsRate, secs)
 	return func() tea.Msg {
 		defer cancel()
+		started := time.Now()
 		err := cmd.Run()
-		return ttsDoneMsg{err: err, gen: gen}
+		elapsed := time.Since(started)
+		if err != nil {
+			clog.Errorf("tts: done gen=%d err=%v elapsed=%s", gen, err, elapsed.Round(time.Millisecond))
+		} else {
+			clog.Debugf("tts: done gen=%d elapsed=%s", gen, elapsed.Round(time.Millisecond))
+		}
+		return ttsDoneMsg{err: err, gen: gen, elapsed: elapsed}
 	}
 }
 
@@ -1199,6 +1221,7 @@ func doCorrection(text string, notePrefix bool, cfg config.Config, activeProfile
 		if profileCode == "" {
 			profileCode = activeProfileCode
 		}
+		clog.Debugf("correction: start profile=%s chars=%d", profileCode, len(text))
 		prof, ok := cfg.Profiles[profileCode]
 		if !ok {
 			return correctionDoneMsg{notePrefix: notePrefix, err: fmt.Errorf("correction profile %q not found in config", profileCode)}
