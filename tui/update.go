@@ -637,6 +637,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.SwitchProfile):
 			m.openProfilePicker()
 
+		case key.Matches(msg, keys.OpenView):
+			m.input.SetValue("/view ")
+			m.input.CursorEnd()
+			m.focus = paneInput
+			m.input.Focus()
+			m.syncLayout()
+
+		case key.Matches(msg, keys.OpenEdit):
+			m.input.SetValue("/edit ")
+			m.input.CursorEnd()
+			m.focus = paneInput
+			m.input.Focus()
+			m.syncLayout()
+
 		case key.Matches(msg, keys.CorrectInput):
 			if !m.correcting && strings.TrimSpace(m.input.Value()) != "" {
 				m.correcting = true
@@ -726,10 +740,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.paramItems = nil
 					m.paramIdx = -1
-				} else if strings.HasPrefix(val, "/") && strings.HasSuffix(val, " ") {
-					// "/cmd " with trailing space and no argument yet — show param picker.
-					cmd := strings.ToLower(strings.TrimSpace(val))
-					items := contextualParams(&m, cmd)
+				} else if strings.HasPrefix(val, "/") && strings.Contains(val, " ") {
+					// "/cmd <partial>" — show param picker or filesystem completion.
+					fields := strings.SplitN(val, " ", 2)
+					cmd := strings.ToLower(strings.TrimSpace(fields[0]))
+					partial := ""
+					if len(fields) > 1 {
+						partial = fields[1]
+					}
+					var items []string
+					if cmd == "/view" || cmd == "/edit" {
+						items = refreshViewCompletion(partial)
+					} else if partial == "" {
+						items = contextualParams(&m, cmd)
+					} else {
+						for _, item := range contextualParams(&m, cmd) {
+							if strings.HasPrefix(strings.ToLower(item), strings.ToLower(partial)) {
+								items = append(items, item)
+							}
+						}
+					}
 					m.paramItems = items
 					if len(items) > 0 {
 						m.paramIdx = 0

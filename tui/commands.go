@@ -35,6 +35,7 @@ var knownCommands = map[string]bool{
 	"config": true, "status": true, "stats": true,
 	"theme": true, "block-keys": true,
 	"logs": true,
+	"view": true, "edit": true,
 }
 
 // looksLikeCommand returns true if the input (no leading /) has ≤ 2 words and
@@ -129,6 +130,12 @@ func handleCommand(m *Model, input string) cmdResult {
 	// --- theme ---
 	case "/theme":
 		return cmdTheme(m, args)
+
+	// --- file viewer / editor ---
+	case "/view":
+		return cmdViewFile(m, args)
+	case "/edit":
+		return cmdEditFile(m, args)
 
 	// --- info ---
 	case "/config":
@@ -916,6 +923,123 @@ func cmdLogs(m *Model) cmdResult {
 }
 
 // =============================================================================
+// view / edit file
+// =============================================================================
+
+func resolvePath(raw string) string {
+	p := os.ExpandEnv(raw)
+	if strings.HasPrefix(p, "~/") {
+		home, _ := os.UserHomeDir()
+		p = filepath.Join(home, p[2:])
+	}
+	return p
+}
+
+func cmdViewFile(m *Model, args []string) cmdResult {
+	if len(args) == 0 {
+		return errResult("/view", "usage: /view <path>")
+	}
+	path := resolvePath(strings.Join(args, " "))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return errResult("/view "+path, err.Error())
+	}
+	check := data
+	if len(check) > 512 {
+		check = check[:512]
+	}
+	if !utf8.Valid(check) {
+		return errResult("/view "+path, fmt.Sprintf("%q is not a text file", path))
+	}
+	const maxBytes = 200 * 1024
+	truncated := false
+	if len(data) > maxBytes {
+		data = data[:maxBytes]
+		truncated = true
+	}
+	text := string(data)
+	if truncated {
+		text += "\n[file truncated at 200 KB]"
+	}
+	m.resourceLines = strings.Split(text, "\n")
+	m.resourceName = filepath.Base(path)
+	m.resourceCursor = 0
+	m.focus = paneResource
+	return cmdResult{input: "/view " + path, suppressCmdPane: true}
+}
+
+func cmdEditFile(m *Model, args []string) cmdResult {
+	if len(args) == 0 {
+		return errResult("/edit", "usage: /edit <path>")
+	}
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		return errResult("/edit", "$EDITOR is not set — add 'export EDITOR=<path>' to your shell config")
+	}
+	path := resolvePath(strings.Join(args, " "))
+	editorCmd := exec.Command(editor, path)
+	return cmdResult{
+		input:           "/edit " + path,
+		suppressCmdPane: true,
+		execCmd: tea.ExecProcess(editorCmd, func(err error) tea.Msg {
+			return nil
+		}),
+	}
+}
+
+// refreshViewCompletion returns filesystem entries for dynamic /view and /edit
+// path completion based on the partial path the user has typed.
+func refreshViewCompletion(partial string) []string {
+	expanded := os.ExpandEnv(partial)
+	if strings.HasPrefix(expanded, "~/") {
+		home, _ := os.UserHomeDir()
+		expanded = filepath.Join(home, expanded[2:])
+	}
+
+	var dir, prefix string
+	if strings.HasSuffix(partial, "/") {
+		dir = expanded
+		prefix = ""
+	} else {
+		dir = filepath.Dir(expanded)
+		prefix = filepath.Base(expanded)
+		if prefix == "." {
+			prefix = ""
+		}
+	}
+	if dir == "" || dir == "." {
+		dir = "."
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+
+	var items []string
+	for _, e := range entries {
+		name := e.Name()
+		if prefix != "" && !strings.HasPrefix(strings.ToLower(name), strings.ToLower(prefix)) {
+			continue
+		}
+		var typed string
+		if strings.HasSuffix(partial, "/") {
+			typed = partial + name
+		} else if dir == "." {
+			typed = name
+		} else {
+			typedDir := strings.TrimSuffix(partial, prefix)
+			typed = typedDir + name
+		}
+		if e.IsDir() {
+			typed += "/"
+		}
+		items = append(items, typed)
+	}
+	return items
+}
+
+// =============================================================================
 // delete-last
 // =============================================================================
 
@@ -1073,6 +1197,8 @@ func allCompletions() []completionEntry {
 		{"/system", "show system prompt"},
 		{"/system-set", "set system prompt"},
 		{"/system-clear", "remove system prompt"},
+		{"/view", "open any file in the built-in viewer"},
+		{"/edit", "open any file in $EDITOR"},
 		{"/config", "show resolved configuration"},
 		{"/status", "show effective defaults"},
 		{"/stats", "show usage and cost stats"},
@@ -1178,6 +1304,8 @@ func cmdHelp(cmd string, args []string) cmdResult {
 			{"/system-clear", "remove system prompt"},
 		},
 		"info": {
+			{"/view <path>", "open any file in the built-in viewer (Ctrl+O)"},
+			{"/edit <path>", "open any file in $EDITOR (Ctrl+E)"},
 			{"/config", "show resolved configuration"},
 			{"/status", "show effective defaults"},
 			{"/stats", "show usage and cost stats"},

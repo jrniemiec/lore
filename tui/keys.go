@@ -18,7 +18,9 @@ type keyMap struct {
 	FocusConv     key.Binding
 	FillCompletion key.Binding
 	CloseOverlay   key.Binding
-	CorrectInput   key.Binding // Ctrl+R: send input for spell/grammar correction
+	CorrectInput   key.Binding // Ctrl+G: send input for spell/grammar correction
+	OpenView       key.Binding // Ctrl+O: open /view prompt
+	OpenEdit       key.Binding // Ctrl+E: open /edit prompt
 }
 
 var keys = keyMap{
@@ -81,5 +83,13 @@ var keys = keyMap{
 	CorrectInput: key.NewBinding(
 		key.WithKeys("ctrl+g"),
 		key.WithHelp("ctrl+g", "correct spelling/grammar"),
+	),
+	OpenView: key.NewBinding(
+		key.WithKeys("ctrl+o"),
+		key.WithHelp("ctrl+o", "open file in viewer"),
+	),
+	OpenEdit: key.NewBinding(
+		key.WithKeys("ctrl+e"),
+		key.WithHelp("ctrl+e", "open file in editor"),
 	),
 }
