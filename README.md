@@ -39,7 +39,7 @@
 - **Chat labels** — `[you]:` / `[profile]:` prefixes on each turn (default on); model tag shown in the focused block header
 - **Fold/unfold** — long responses are foldable per-entry (`v`) or in bulk (`/fold`, `/unfold`); threshold and startup state are configurable
 - **Text-to-speech** — `s` speaks any exchange; `/play-all` queues the whole conversation; `/tts on` auto-speaks every response; sentence-by-sentence streaming playback starts before the response finishes; resource view speaks line-by-line with cursor tracking
-- **Input correction** — `Ctrl+R` sends the input field to an LLM for spell and grammar correction; result replaces the input in place
+- **Input correction** — `Ctrl+G` sends the input field to an LLM for spell and grammar correction; result replaces the input in place
 - **Model override** — `-m <model>` at startup overrides the model within the active profile without creating a new profile entry
 - **Headless mode** — full CLI for scripting: pipe stdin, read from files, all admin ops as flags
 - **Personal notes** — `// text` saves a note to history that is never sent to the LLM
@@ -161,7 +161,7 @@ Optional top-level keys in `config.json`. CLI flags override these when explicit
 | `chat_labels` | bool | `true` | Prefix each turn with `[you]:` / `[profile]:` |
 | `fold_lines` | int | `20` | Line count threshold before an entry is foldable (0 = never fold) |
 | `fold_on_start` | bool | `false` | Start with all long entries collapsed |
-| `correction_profile` | string | — | Profile used for `Ctrl+R` spell/grammar correction; falls back to the active profile if unset |
+| `correction_profile` | string | — | Profile used for `Ctrl+G` spell/grammar correction; falls back to the active profile if unset |
 
 ```json
 {
@@ -220,7 +220,7 @@ Equivalent CLI flags: `--chat-labels`, `--fold-lines`, `--fold-on-start`.
 - `❄` — pulsating (bold/dim) while waiting for the first streaming token
 - `❄ streaming ●●●●●` — brightness wave sweeping across the string while tokens arrive
 - `❄ speaking #N ●●●●●` — same wave while TTS is playing an exchange
-- `❄ correcting ●●●●●` — shown while `Ctrl+R` correction call is in flight
+- `❄ correcting ●●●●●` — shown while `Ctrl+G` correction call is in flight
 - `✓ corrected` / `✓ no changes` / `✗ correction failed` — flash for 2 s after correction completes
 - `♪` — appended to the box header timestamp of the exchange currently being spoken
 - `[ #N ]` — shows which exchange is focused in nav mode
@@ -390,7 +390,7 @@ Type `/` in the input pane to see completions. Commands can also be typed bare (
 // This is a personal note
 ```
 
-Any input starting with `//` is saved as a personal note to the current topic's history. Notes are visible in the conversation pane (shown in user-text colour with a 📌 prefix) but are **never sent to the LLM** — they do not consume context tokens and do not influence replies. `Ctrl+R` correction works on notes too — the `//` prefix is preserved.
+Any input starting with `//` is saved as a personal note to the current topic's history. Notes are visible in the conversation pane (shown in user-text colour with a 📌 prefix) but are **never sent to the LLM** — they do not consume context tokens and do not influence replies. `Ctrl+G` correction works on notes too — the `//` prefix is preserved.
 
 ---
 
