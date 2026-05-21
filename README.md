@@ -284,7 +284,6 @@ Use `/logs` in the TUI to open a live `tail -f` view in a new terminal window. R
 | `Ctrl+P` | Open profile picker |
 | `Ctrl+G` | Send input text for spell/grammar correction (result replaces input) |
 | `Ctrl+O` | Prefill `/view ` — type or autocomplete a filesystem path to open in viewer |
-| `Ctrl+E` | Prefill `/edit ` — type or autocomplete a filesystem path to open in `$EDITOR` |
 | `Ctrl+C` | First press: cancel streaming. Within 500 ms again: quit |
 | `Ctrl+L` | Clear screen |
 
@@ -392,7 +391,7 @@ Type `/` in the input pane to see completions. Commands can also be typed bare (
 | Command | Description |
 |---|---|
 | `/view <path>` | Open any text file in the built-in viewer (`Ctrl+O` to prefill) |
-| `/edit <path>` | Open any file in `$EDITOR` (`Ctrl+E` to prefill) |
+| `/edit <path>` | Open any file in `$EDITOR` |
 
 Both commands support `~/`, `$ENV`, and relative paths. After typing `/view ` or `/edit `, the parameter picker shows filesystem completions — directories get a trailing `/` so you can Tab deeper. The viewer uses the same overlay as `/resource-view`.
 

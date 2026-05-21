@@ -652,13 +652,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.input.Focus()
 			m.syncLayout()
 
-		case key.Matches(msg, keys.OpenEdit):
-			m.input.SetValue("/edit ")
-			m.input.CursorEnd()
-			m.focus = paneInput
-			m.input.Focus()
-			m.syncLayout()
-
 		case key.Matches(msg, keys.CorrectInput):
 			if !m.correcting && strings.TrimSpace(m.input.Value()) != "" {
 				m.correcting = true
